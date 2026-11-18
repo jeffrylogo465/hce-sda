@@ -61,20 +61,23 @@ public class EmvTest {
     }
 
     /**
-     * Only 0x40, 0x20 and 0x01 go. Everything else in byte 1 survives.
+     * Only 0x40, 0x20, 0x04 and 0x01 go. Everything else in byte 1 survives.
      *
      * 0x9F is 0x80 RFU | 0x10 CV | 0x08 TRM | 0x04 issuer auth | 0x02 CVM |
-     * 0x01 CDA | 0x20 DDA | 0x40 SDA. Expected 0x9E.
+     * 0x01 CDA | 0x20 DDA | 0x40 SDA. Issuer Authentication needs an ARPC a
+     * clone cannot produce either, same reasoning as the other three.
+     * Expected 0x9A.
      */
     @Test
     public void clearOdaKeepsTheBitsACloneCanHonour() {
         byte[] tpl = Emv.hex("770A82029F00940408010100");
         Emv.clearOda(tpl);
         byte[] aip = Emv.findTag(tpl, 0x82);
-        assertEquals(0x9E, aip[0] & 0xFF);
+        assertEquals(0x9A, aip[0] & 0xFF);
         assertEquals(0x80, aip[0] & 0x80);
         assertEquals(0x10, aip[0] & 0x10);
         assertEquals(0x08, aip[0] & 0x08);
+        assertEquals(0, aip[0] & 0x04);
     }
 
     /** An AIP already free of ODA bits is unchanged. */
@@ -83,6 +86,32 @@ public class EmvTest {
         byte[] tpl = Emv.hex("770A82021880940408010100");
         Emv.clearOda(tpl);
         assertEquals(0x18, Emv.findTag(tpl, 0x82)[0] & 0xFF);
+    }
+
+    // ---------------------------------------------------------- clearOdaKeepSda
+
+    /**
+     * Same three bits as clearOda() (DDA 0x20, issuer auth 0x04, CDA 0x01),
+     * minus SDA (0x40) - the one caller, mastercardGpoFromCard(), claims SDA
+     * on purpose (see Profiles.AIP_MC and term-new6.log) so it must survive.
+     * 0x7D is SDA | DDA | CV | TRM | issuer auth | CDA; expected 0x58
+     * (SDA | CV | TRM).
+     */
+    @Test
+    public void clearOdaKeepSdaStripsTheOtherThree() {
+        byte[] tpl = Emv.hex("770A82027D00940408010100");
+        Emv.clearOdaKeepSda(tpl);
+        byte[] aip = Emv.findTag(tpl, 0x82);
+        assertEquals(0x58, aip[0] & 0xFF);
+    }
+
+    /** SDA alone (0x40) must come back exactly as it went in. */
+    @Test
+    public void clearOdaKeepSdaLeavesSdaAlone() {
+        byte[] tpl = Emv.hex("770A82025800940408010100");
+        Emv.clearOdaKeepSda(tpl);
+        byte[] aip = Emv.findTag(tpl, 0x82);
+        assertEquals(0x58, aip[0] & 0xFF);
     }
 
     // -------------------------------------------------------------- stripAcTags

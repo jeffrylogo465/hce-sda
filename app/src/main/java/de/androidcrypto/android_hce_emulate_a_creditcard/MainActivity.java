@@ -1,6 +1,7 @@
 package de.androidcrypto.android_hce_emulate_a_creditcard;
 
 import android.app.AlertDialog;
+import android.app.role.RoleManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -8,16 +9,22 @@ import android.content.SharedPreferences;
 import android.nfc.NfcAdapter;
 import android.nfc.NfcManager;
 import android.nfc.cardemulation.CardEmulation;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -50,7 +57,7 @@ public class MainActivity extends AppCompatActivity {
      * on the wire come from the same value in ShadowApduService; this copy has
      * to agree with it or the preview lies.
      */
-    private static final String CVMLIST = "00000000000000001F031E03";
+    private static final String CVMLIST = "000003E8000003E81F061E07";
 
     /** Eight zero DD bytes, for the menu-driven skeleton builder. */
     private static final String DD_ZERO = "0000000000000000";
@@ -107,6 +114,20 @@ public class MainActivity extends AppCompatActivity {
             "AMEX", "A00000002501", "1880", "", "001C" };
 
     private static final String ASKED_DEFAULT = "asked_default";
+    private static final String ASKED_WALLET_ROLE = "asked_wallet_role";
+
+    /**
+     * RoleManager.ROLE_WALLET does not exist in this app's compileSdk 34
+     * android.jar - verified with javap: the only public role constants
+     * at API 34 are ASSISTANT, BROWSER, CALL_REDIRECTION, CALL_SCREENING,
+     * DIALER, EMERGENCY, HOME, NOTES, SMS. isRoleAvailable()/isRoleHeld()/
+     * createRequestRoleIntent() all take a plain role-name String, not an
+     * enum, so this is hand-typed rather than left unimplemented - but it
+     * is UNVERIFIED against a real device/OS release: isRoleAvailable()
+     * may simply return false everywhere this runs, in which case nothing
+     * here ever fires and nothing says so.
+     */
+    private static final String ROLE_WALLET = "android.app.role.WALLET";
 
     private static final String[][] VARIANTS = {
             {"0", "CDOL, AIP, ATC, IAD  -  input order 0"},
@@ -153,6 +174,16 @@ public class MainActivity extends AppCompatActivity {
 
     private SharedPreferences prefs;
     private final List<CardAdapter.CardModel> cards = new ArrayList<>();
+
+    /** Registered in onCreate, before the activity is started - the result
+     *  is a no-op either way: RoleManager's own system UI is what the user
+     *  answers, this app never reads the result code back. */
+    private ActivityResultLauncher<Intent> walletRoleLauncher;
+
+    /** Test-only reads of the in-memory card list - no XML id reaches these. */
+    CardAdapter.CardModel cardAt(int i) { return cards.get(i); }
+
+    int currentSlot() { return current; }
     private CardAdapter adapter;
     private RecyclerView pager;
     private LinearLayoutManager layoutManager;
@@ -160,6 +191,10 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtCount, txtStatus, banner;
     private CheckBox chkForceTc;
     private CheckBox chkAssetCard;
+    private Spinner spnAssetScheme;
+    private TextView txtAssetScheme;
+    /** Guards the one onItemSelected Android fires when the adapter/selection is set in code. */
+    private boolean syncingAssetScheme;
 
     private EditText etLabel, etName, etPan, etExpiry, etService, etDiscretionary,
             etTrack2, etAid, etAip, etAfl, etCid, etAtc, etArqc, etIad, etMkac,
@@ -223,9 +258,10 @@ public class MainActivity extends AppCompatActivity {
      * cycle. 250 ms coalesces a typed PAN into one write and is short enough
      * that the wallet card updates before you look at it.
      *
-     * Only the generic field watcher is debounced. Save, Clone, the profile
-     * picker and the arm path still write immediately - they are one-shot and
-     * everything downstream reads the boxes, not prefs.
+     * Only the generic field watcher and the track2/PAN filler below are
+     * debounced. Save, Clone, the profile picker and the arm path still
+     * write immediately - they are one-shot and everything downstream reads
+     * the boxes, not prefs.
      */
     private final android.os.Handler ui =
             new android.os.Handler(android.os.Looper.getMainLooper());
@@ -233,6 +269,15 @@ public class MainActivity extends AppCompatActivity {
     private final Runnable collectNow = new Runnable() {
         @Override public void run() { collect(); }
     };
+
+    /**
+     * Token for the debounced etTrack2/etPan filler (autoFill/maybeProfile/
+     * applyDump/applyCardBlock/seedFromPan) - see where it is posted, below.
+     * A token, not a stored Runnable, because a fresh lambda is posted on
+     * every keystroke; removeCallbacksAndMessages(FILLER_TOKEN) drops
+     * whichever one is still pending regardless of identity.
+     */
+    private static final Object FILLER_TOKEN = new Object();
 
     private void scheduleCollect() {
         ui.removeCallbacks(collectNow);
@@ -242,6 +287,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Must be registered before the activity is STARTED, so onCreate is
+        // the only place this can go - androidx throws if this runs any
+        // later. The callback is a no-op: the wallet-role request is a
+        // fire-and-forget system prompt, not something this app branches on.
+        walletRoleLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(), result -> { });
 
         // File, not clipboard. The old inline handler wrote the trace to the
         // clipboard and killed the process, which works while this activity is
@@ -253,6 +305,7 @@ public class MainActivity extends AppCompatActivity {
         if (getSupportActionBar() != null) getSupportActionBar().hide();
 
         prefs = Prefs.get(this);
+        maybeRequestWalletRole();
 
         pager = findViewById(R.id.pager);
         txtCount = findViewById(R.id.txtCount);
@@ -260,6 +313,8 @@ public class MainActivity extends AppCompatActivity {
         banner = findViewById(R.id.banner);
         chkForceTc = findViewById(R.id.chkForceTc);
         chkAssetCard = findViewById(R.id.chkAssetCard);
+        spnAssetScheme = findViewById(R.id.spnAssetScheme);
+        txtAssetScheme = findViewById(R.id.txtAssetScheme);
 
         etLabel = findViewById(R.id.etLabel);
         etName = findViewById(R.id.etName);
@@ -333,6 +388,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnCallBank).setOnClickListener(v -> callIssuer());
         syncAssetCardBox();
         chkAssetCard.setOnCheckedChangeListener((b, on) -> setAssetCard(on));
+        setUpAssetSchemeSpinner();
         findViewById(R.id.btnDelete).setOnClickListener(v -> onDelete());
         findViewById(R.id.btnAdd).setOnLongClickListener(v -> { startReader(); return true; });
 
@@ -374,13 +430,39 @@ public class MainActivity extends AppCompatActivity {
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
             public void afterTextChanged(Editable s) {
                 if (binding || dumping) return;
-                autoFill();
-                maybeProfile();
+                // Debounced: a paste (or fast typing) into etTrack2/etPan
+                // fires this once per character/chunk, and running
+                // applyCardBlock on every intermediate, not-yet-complete
+                // value is wasted work at best and a spurious refusal at
+                // worst. removeCallbacksAndMessages(FILLER_TOKEN) drops
+                // whatever was pending before posting the new one, so only
+                // the value still there 250ms after the last change runs.
+                ui.removeCallbacksAndMessages(FILLER_TOKEN);
+                ui.postDelayed(() -> {
+                    if (binding || dumping) return;
+                    autoFill();
+                    maybeProfile();
 
-                String t2 = t(etTrack2);
-                if (looksLikeFullDump(t2)) applyDump(t2);
+                    String t2 = t(etTrack2);
+                    // A captured EMV chain and a bare track 2 can both start
+                    // with a character that reads as a decimal digit - 0x70
+                    // (a real BER template tag) is ALSO the text '7'. Decide
+                    // which this is before either path runs, and refuse
+                    // outright rather than guess when both heuristics agree.
+                    boolean chainLike = looksLikeChain(t2);
+                    boolean track2Like = looksLikeFullDump(t2);
+                    if (chainLike && track2Like) {
+                        status("box: looks like both a chain and a track 2 - refusing to guess", COL_STALE);
+                    } else if (chainLike) {
+                        applyChain(t2);
+                    } else if (track2Like) {
+                        applyDump(t2);
+                    } else if (looksLikeCardBlock(t2)) {
+                        applyCardBlock(t2);
+                    }
 
-                seedFromPan(digits(t(etPan)));
+                    seedFromPan(digits(t(etPan)));
+                }, FILLER_TOKEN, 250);
             }
         };
         etTrack2.addTextChangedListener(filler);
@@ -399,12 +481,40 @@ public class MainActivity extends AppCompatActivity {
         showPage(0);
     }
 
+    /**
+     * A captured EMV chain, not a track 2 line - DumpChain.parse()'s own
+     * shape, cheaply: opens with a BER template tag (bit 0x20 set in byte 0
+     * - a captured SELECT FCI, GPO response or READ RECORD response all
+     * start with one) and carries tags 90 (issuer cert) and 9F4B (SDAD)
+     * somewhere in it. A substring check, not a full TLV walk - this only
+     * has to decide which handler to call; DumpChain.parse() inside
+     * applyChain() does the real validation and can still refuse.
+     */
+    private static boolean looksLikeChain(String t2) {
+        if (t2 == null) return false;
+        String hex = t2.replaceAll("\\s", "").toUpperCase(java.util.Locale.ROOT);
+        if (hex.isEmpty() || hex.length() % 2 != 0 || !hex.matches("[0-9A-F]+")) return false;
+        int b0 = Integer.parseInt(hex.substring(0, 2), 16);
+        if ((b0 & 0x20) == 0) return false;
+        return hex.contains("90") && hex.contains("9F4B");
+    }
+
     /** A track 2 long enough to carry a CSC and an ATC. */
     private static boolean looksLikeFullDump(String t2) {
         String s = normaliseTrack2(t2);
         int d = s.indexOf('D');
         if (d < 12 || d > 19) return false;
         return s.length() >= d + 8;
+    }
+
+    /**
+     * A pasted card block rather than one track 2 line - LoadedCard's TAG=HEX/
+     * REC format, which is inherently multi-line. Checked only when
+     * looksLikeFullDump() has already said no, so a single bare track 2 line
+     * keeps going through applyDump() exactly as it always has.
+     */
+    private static boolean looksLikeCardBlock(String t2) {
+        return t2 != null && t2.trim().contains("\n");
     }
 
     // ---------- status line ----------
@@ -517,16 +627,29 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * The profile's own MSD default. Off for Mastercard and Visa, on for Amex.
+     * The profile's own MSD default. Off for Mastercard, on for Visa and Amex.
      *
      * Mastercard is capable of MSD, but the record and script path is a replay:
      * the script carries the cryptogram, so ccc() never runs and the ATC is
      * driven by the DD field instead of by the tap. qVSDC is the default
-     * because it is what a modern terminal does and what the ATC patch is
-     * about. Amex stays on MSD - ExpressPay has no qVSDC shape here.
+     * because it is what a modern terminal does, what the ATC patch is
+     * about, AND because Profiles.AIP_MC (1880) claims no ODA bit - nothing
+     * here invites the failed-SDA path qVSDC Visa has.
+     *
+     * Visa moved to MSD by default for the opposite reason: Profiles.AIP_VISA
+     * (5800) keeps qVSDC's bit set because a Visa kernel rejects the app
+     * without it, and that bit is also the generic SDA bit - with no
+     * certificate behind it, a qVSDC tap fails ODA, picks up the TVR bit and
+     * goes online per the CTQ, where a keyless card's zero ARQC gets
+     * declined (see AIP_VISA's own comment). qVSDC itself is UNCHANGED and
+     * still reachable - typing 0 into the per-slot MSD box keeps it, same as
+     * before this default flipped - it is just no longer what a fresh or
+     * auto-detected Visa slot gets without asking.
+     *
+     * Amex stays on MSD - ExpressPay has no qVSDC shape here.
      */
     private static String msdDefault(String net) {
-        return "AMEX".equals(net) ? "1" : "0";
+        return "AMEX".equals(net) || "VISA".equals(net) ? "1" : "0";
     }
 
     /**
@@ -909,6 +1032,12 @@ public class MainActivity extends AppCompatActivity {
         binding = false;
         collect();
 
+        // A bare track 2 never carries the certificate chain - reusing
+        // LoadedCard's own bare-track2 parse (guaranteed to succeed: d[]
+        // already passed parseDump()'s stricter checks) for warnings() is
+        // one source of truth instead of a second hardcoded list.
+        setCertWarning(current, LoadedCard.parse(d[0] + "=" + d[1] + svcOut + d[3]).warnings());
+
         int cscLen = cscLength(net);
         if (d[3].length() >= cscLen) {
             prefs.edit()
@@ -923,6 +1052,163 @@ public class MainActivity extends AppCompatActivity {
         if (!armed) return;
         status("dump loaded " + d[0] + " " + net
                 + " - record, ATC and script armed. Tap it.", COL_WARM);
+    }
+
+    /**
+     * Paste a captured EMV chain (DumpChain's shape - a SELECT FCI, a GPO
+     * response and the READ RECORD responses, concatenated) into TRACK 2
+     * RAW HEX and it loads into AssetCardHolder's shared AssetCardEngine -
+     * a different card from this slot's own fields, which belong to the
+     * CardProfile/script engine ShadowApduService otherwise runs. Loading
+     * here does NOT turn the asset-card routing on by itself; the
+     * chkAssetCard box still decides whether a tap actually reaches it.
+     *
+     * No CA keyset is wired in here - loadDump(blob, null) always reports
+     * CA_KEY (or NO_AID) from lastDumpVerify(), same as any caller with no
+     * real CA key on file. That is a warning, not a gate: the dump's own
+     * bytes still serve.
+     *
+     * FAILS LOUDLY on purpose - this replaces the one card every tap
+     * answers from while asset-card routing is on, so a silent parse
+     * rejection here is a worse surprise than the quieter status-line-only
+     * refusals applyDump()/applyCardBlock() use for a single slot's own
+     * fields.
+     */
+    private void applyChain(String raw) {
+        // hexToBytes() is lenient (strips non-hex, pads an odd length) - but
+        // looksLikeChain() already proved this exact string is clean,
+        // even-length hex before ever calling here, so that leniency is
+        // moot in practice. Anything actually wrong with the bytes is
+        // DumpChain.parse()'s job to catch, inside loadDump() below.
+        byte[] blob = hexToBytes(raw);
+
+        AssetCardEngine engine;
+        try {
+            engine = AssetCardHolder.get(this);
+            engine.loadDump(blob, null);
+        } catch (Exception e) {
+            Toast.makeText(this, "Chain rejected: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            status("chain: " + e.getMessage(), COL_STALE);
+            return;
+        }
+
+        String badge = engine.lastDumpVerify() == null ? "?" : engine.lastDumpVerify().toString();
+        status("chain loaded into the shared asset card - SDA: " + badge
+                + (chkAssetCard != null && chkAssetCard.isChecked() ? "" : " (asset-card routing is OFF - check the box to tap it)"),
+                COL_WARM);
+    }
+
+    /**
+     * Paste a full card block (LoadedCard's TAG=HEX/REC format) into the
+     * TRACK 2 RAW HEX field and it becomes the selected slot - same
+     * destination as applyDump(), not a parallel store. PAN/expiry/service
+     * code/discretionary/track2 always come from it; AID, AIP, AFL, CID,
+     * ATC and MK_AC OVERRIDE applyProfile()'s own hand-typed defaults
+     * whenever the block supplies them, because those bytes are the card's,
+     * not the editor's fallback - applyProfile() still runs first for the
+     * network baseline (CDOL/label/etc.), it is just not the last word on
+     * them here.
+     *
+     * The certificate chain and the ICC key have no field in this editor at
+     * all, so LoadedCard.warnings() - whatever the block didn't supply -
+     * goes straight to the tile via setCertWarning(), not a dialog.
+     */
+    private void applyCardBlock(String raw) {
+        LoadedCard c;
+        try {
+            c = LoadedCard.parse(raw);
+        } catch (IllegalArgumentException e) {
+            status("card block: " + e.getMessage(), COL_STALE);
+            return;
+        }
+
+        String pan = c.pan();
+        if (pan == null || pan.length() < 12 || pan.length() > 19
+                || !pan.matches("[0-9]+") || !luhn(pan)) {
+            status("card block: PAN " + (pan == null ? "missing" : pan) + " is not usable", COL_STALE);
+            return;
+        }
+        String net = profileFor(pan);
+        if (net.isEmpty()) {
+            status("card block: " + pan + " is not a network this app serves", COL_STALE);
+            return;
+        }
+
+        dumping = true;
+
+        String expiry6 = c.expiry();
+        String expiry4 = expiry6 != null && expiry6.length() >= 4 ? expiry6.substring(0, 4) : "3112";
+        String sc = c.serviceCode();
+        String dd = c.discretionary();
+
+        binding = true;
+        etPan.setText(pan);
+        etExpiry.setText(expiry4);
+        if (sc != null) etService.setText(sc);
+        etDiscretionary.setText(dd == null ? "" : dd);
+        etTrack2.setText(pan + "=" + expiry4 + (sc == null ? "" : sc) + (dd == null ? "" : dd));
+        binding = false;
+        collect();
+
+        applyProfile(pan, net);
+
+        // The card's own bytes win over applyProfile()'s hand-typed
+        // defaults - only when the block actually supplied them.
+        binding = true;
+        if (c.aid() != null) etAid.setText(c.aid());
+        if (c.tag("82") != null) etAip.setText(c.tag("82"));
+        if (c.tag("94") != null) etAfl.setText(c.tag("94"));
+        if (c.tag("9F27") != null) etCid.setText(c.tag("9F27"));
+        if (c.tag("9F36") != null) etAtc.setText(c.tag("9F36"));
+        if (c.acKey() != null) etMkac.setText(c.acKey());
+
+        // ShadowApduService.scriptRaw() falls back to the NETWORK PROFILE'S
+        // OWN canned script (real captured Mastercard/Visa/Amex bytes, a
+        // DIFFERENT AID from ours) whenever the script box is empty, and
+        // that canned script answers PPSE/FCI/GPO before this card's own
+        // AID/AIP/AFL fields are ever consulted - so "come from the card,
+        // not the editor defaults" needs the canned replay disarmed, not
+        // just overridden. A non-empty, line-free box skips that fallback;
+        // collect() below then computes "usescript"="0" from it, which is
+        // what actually turns useScript() off.
+        if (t(etScript).trim().isEmpty()) {
+            etScript.setText("# loaded from a card block - serving this card's own fields, not a canned script");
+        }
+        binding = false;
+        collect();
+
+        setCertWarning(current, c.warnings());
+
+        // Marked exactly as applyDump() marks it, for the exact same reason:
+        // filler() unconditionally calls seedFromPan(pan) right after this
+        // returns, and seedFromPan() only skips a PAN it finds already
+        // marked here - otherwise it reruns applyProfile() and overwrites
+        // etDiscretionary with its own CSC guess, undoing everything above.
+        prefs.edit().putString(key(current, "seededfor"), pan).apply();
+
+        dumping = false;
+
+        // Not armFromFields(): that re-derives the ATC as "whatever is in
+        // the box, minus one" for MSD replay, which would clobber the ATC
+        // just set from the card's own 9F36. A block's EMV fields serve
+        // through the normal AID/AIP/AFL/record path armFromFields() has
+        // nothing to do with.
+        status("card block loaded " + pan + " " + net
+                + (c.warnings().isEmpty() ? " - full chain" : " - missing " + String.join(", ", c.warnings())),
+                COL_WARM);
+    }
+
+    /**
+     * Records which chain/ICC-key fields a loaded track 2 or block did not
+     * supply, so the tile can show it - see CardAdapter.CardModel.certWarning
+     * and bindTile(). Empty clears it (a fully-chained block, or a plain
+     * hand-typed/profile-picked card that never calls this at all).
+     */
+    private void setCertWarning(int slot, java.util.List<String> warnings) {
+        String csv = warnings == null || warnings.isEmpty() ? "" : String.join(", ", warnings);
+        prefs.edit().putString(key(slot, "certwarning"), csv).apply();
+        if (slot < cards.size()) cards.get(slot).certWarning = csv;
+        adapter.notifyItemChanged(slot);
     }
 
     /**
@@ -1244,6 +1530,7 @@ public class MainActivity extends AppCompatActivity {
             c.expiry = prefs.getString(key(i, "expiry"), "");
             c.aid = prefs.getString(key(i, "aid"), "");
             c.msd = intPref(key(i, "msd"), 0);
+            c.certWarning = prefs.getString(key(i, "certwarning"), "");
             cards.add(c);
 
             e.putString(key(i, "usescript"),
@@ -1713,6 +2000,60 @@ public class MainActivity extends AppCompatActivity {
         chkAssetCard.setChecked(on);
         chkAssetCard.setOnCheckedChangeListener((b, v) -> setAssetCard(v));
     }
+
+    /**
+     * Which real brand AID the asset card's PPSE advertises alongside its
+     * own AFFFFFFFFF1234 - ShadowApduService.PREF_ASSET_SCHEME, "MASTERCARD"
+     * by default. Kept out of showKeyTools(): nothing wrote this pref before
+     * now, the same unreachable-default trap asset_profile had, and this one
+     * has to be visible rather than buried behind a long-press dialog.
+     */
+    private void setUpAssetSchemeSpinner() {
+        String[] names = new String[AssetSchemeProfile.values().length];
+        for (int i = 0; i < names.length; i++) names[i] = AssetSchemeProfile.values()[i].name();
+
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_spinner_item, names);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spnAssetScheme.setAdapter(adapter);
+
+        syncAssetSchemeSpinner();
+
+        spnAssetScheme.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View v, int pos, long id) {
+                if (syncingAssetScheme) return;
+                setAssetScheme(AssetSchemeProfile.values()[pos]);
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+        });
+    }
+
+    private void setAssetScheme(AssetSchemeProfile scheme) {
+        prefs.edit().putString("asset_scheme", scheme.name()).apply();
+        showActiveAssetScheme(scheme);
+        status("PPSE now advertises " + scheme.name() + " (" + scheme.aid + ") alongside the test AID",
+                COL_FRESH);
+    }
+
+    private void showActiveAssetScheme(AssetSchemeProfile scheme) {
+        txtAssetScheme.setText("advertising: " + scheme.name());
+    }
+
+    /** Show the stored scheme without firing the listener, same pattern as syncAssetCardBox(). */
+    private void syncAssetSchemeSpinner() {
+        String v = prefs.getString("asset_scheme", AssetSchemeProfile.MASTERCARD.name());
+        AssetSchemeProfile scheme = AssetSchemeProfile.MASTERCARD;
+        for (AssetSchemeProfile s : AssetSchemeProfile.values()) if (s.name().equals(v)) scheme = s;
+
+        syncingAssetScheme = true;
+        spnAssetScheme.setSelection(scheme.ordinal());
+        showActiveAssetScheme(scheme);
+        syncingAssetScheme = false;
+    }
+
 
     /** Try the Keystore again after a plaintext fallback. See Prefs.reset(). */
     private void retryEncryption() {
@@ -2669,6 +3010,42 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * One-shot: asks Android's own ROLE_WALLET prompt (the system "set as
+     * default wallet app" dialog, API 29+) at most once per install, never
+     * on a later launch or resume even if the user declines or dismisses
+     * it. Deliberately independent of isDefaultPayment()/maybeAskDefault()
+     * above - the wallet role (Quick Access Wallet / wallet tile) and the
+     * NFC default-payment-app role are two different platform concepts,
+     * and this app wants both without conflating them.
+     *
+     * The ask-once decision lives in markWalletRoleAsked() so it is
+     * testable without a RoleManager (or an ActivityResultLauncher) to
+     * mock - see that method's own doc.
+     */
+    private void maybeRequestWalletRole() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
+        RoleManager rm = getSystemService(RoleManager.class);
+        if (rm == null) return;
+        if (!rm.isRoleAvailable(ROLE_WALLET)) return;
+        if (rm.isRoleHeld(ROLE_WALLET)) return;
+        if (!markWalletRoleAsked()) return;
+        walletRoleLauncher.launch(rm.createRequestRoleIntent(ROLE_WALLET));
+    }
+
+    /**
+     * True (and marks ASKED_WALLET_ROLE so every later call returns false)
+     * the first time this runs after a fresh install/Prefs.reset(); false
+     * every time after. Split out from maybeRequestWalletRole() itself so
+     * the ask-once gate is a plain prefs read/write a test can call
+     * directly, with no RoleManager or launcher involved at all.
+     */
+    boolean markWalletRoleAsked() {
+        if (prefs.getBoolean(ASKED_WALLET_ROLE, false)) return false;
+        prefs.edit().putBoolean(ASKED_WALLET_ROLE, true).apply();
+        return true;
+    }
+
     private void maybeAskDefault() {
         boolean isDefault = isDefaultPayment();
 
@@ -2744,6 +3121,10 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             syncAssetCardBox();
+        } catch (Throwable ignored) { }
+
+        try {
+            syncAssetSchemeSpinner();
         } catch (Throwable ignored) { }
 
         try {
