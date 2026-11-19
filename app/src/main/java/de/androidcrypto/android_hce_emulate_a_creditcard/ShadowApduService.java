@@ -3,6 +3,7 @@ package de.androidcrypto.android_hce_emulate_a_creditcard;
 import android.content.SharedPreferences;
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -236,6 +237,17 @@ public class ShadowApduService extends HostApduService {
      * Set at the top of processCommandApdu, cleared in onDeactivated.
      */
     private boolean tapOpen;
+
+    /**
+     * How many APDUs this tap has seen, and when the last one arrived
+     * (SystemClock.elapsedRealtime(), so a suspend/resume can't skew it the
+     * way System.currentTimeMillis() could). Both reset on the first APDU
+     * of a tap alongside tapOpen, both read by onDeactivated() to tell a
+     * terminal-initiated DESELECT (a real decision) apart from the field
+     * just dropping (LINK_LOSS) - see that method's own doc.
+     */
+    private int apduCount;
+    private long lastApduAt;
 
     private byte[] txnAip;
     private String txnAtc;
@@ -1810,12 +1822,15 @@ public class ShadowApduService extends HostApduService {
      * it byte for byte; this method is called instead of using those bytes,
      * for the GPO only - PPSE and SELECT still come from the script.
      *
-     * 82: Profiles.aipMc() through Emv.clearOdaKeepSda() then
-     * Emv.setCdcvm() - the same two-step edit the captured-replay and
+     * 82: the "aip" box when it holds at least one valid byte pair, else
+     * Profiles.aipMc() - same hexBox() fallback shape as the synthetic/boxed-
+     * AIP branch in gpo() (see capturedAip()'s caller there) - through
+     * Emv.clearOdaKeepSda() then Emv.setCdcvm(). That two-step edit runs on
+     * whichever base was picked, same as the captured-replay and
      * synthetic/boxed-AIP branches run on their own AIPs in gpo(), just with
      * clearOda()'s SDA-stripping mask swapped for the one sibling that
-     * leaves SDA alone, because this AIP is this app's own deliberate claim,
-     * not a captured one.
+     * leaves SDA alone, because this AIP is this app's own deliberate claim
+     * (typed or built-in), not a captured one.
      *
      * AIP_MC ITSELF IS BACK TO 1800 (see that constant's own doc) - no ODA
      * bit claimed at all, byte 2 all clear. Claiming SDA (5840, the
@@ -1847,10 +1862,14 @@ public class ShadowApduService extends HostApduService {
     private static final String AFL_MC_PROBE_WITH_AID = "08010100";
 
     private byte[] mastercardGpoFromCard() {
-        byte[] wrap = tlv(0x77, tlv(0x82, Profiles.aipMc()));
+        String boxed = hexBox("aip", "");
+        byte[] base = boxed.length() >= 4 ? hex(boxed) : Profiles.aipMc();
+        byte[] wrap = tlv(0x77, tlv(0x82, base));
         Emv.clearOdaKeepSda(wrap);
         Emv.setCdcvm(wrap);
         byte[] aip = capturedAip(wrap);
+
+        tap("-- gpo mc box=" + p("aip", "") + " served=" + bytesToHex(aip));
 
         return tlv(0x77, cat(
                 tlv(0x82, aip),
@@ -1940,6 +1959,7 @@ public class ShadowApduService extends HostApduService {
             // the whole tap on the previous tap's counters and slot.
             if (!tapOpen) {
                 tapOpen = true;
+                apduCount = 0;
                 clearLog();
                 resetTransaction();
                 seedAtcFromCapture();
@@ -1960,6 +1980,9 @@ public class ShadowApduService extends HostApduService {
                 popup(nameLine());
             }
 
+            apduCount++;
+            lastApduAt = SystemClock.elapsedRealtime();
+
             // The PDOL data is needed before the script is evaluated, because
             // the profile's own gpo() MACs over it. See txnPdol.
             if (ins == 0xA8) txnPdol = pdolDataOf(apdu);
@@ -1975,6 +1998,13 @@ public class ShadowApduService extends HostApduService {
             }
 
             tap(">> " + bytesToHex(apdu));
+
+            String sm = null;
+            if ((ins & 0xFF) == 0xA8) {
+                sm = useScript() ? scriptMatch(apdu) : null;
+                tap("-- gpo path: "
+                        + (sm != null ? "script" : rawGpo() != null ? "replay" : "builder"));
+            }
 
             // The mrautio test card from assets/profile.json, when switched on.
             // It answers the whole tap itself, so none of the script, MAC and
@@ -2060,7 +2090,12 @@ public class ShadowApduService extends HostApduService {
             else if (ins == 0xAE) nGens++;
             else if (ins == 0x2A) nCccs++;
 
-            String hit = useScript() ? scriptMatch(apdu) : null;
+            String hit;
+            if ((ins & 0xFF) == 0xA8) {
+                hit = sm;
+            } else {
+                hit = useScript() ? scriptMatch(apdu) : null;
+            }
             if (hit != null) {
                 scriptHits++;
 
@@ -2313,6 +2348,17 @@ public class ShadowApduService extends HostApduService {
     private byte[] gpo(byte[] apdu) {
         byte[] raw = rawGpo();
         boolean msd = isMsd();
+
+        boolean replay = raw != null && raw.length >= 4;
+        tap("-- gpo branch=" + (replay ? "replay" : "builder")
+                + " framing=" + ((replay && (raw[0] & 0xFF) == 0x80) ? "80" : "77")
+                + " msd=" + msd);
+        if (raw != null) {
+            String blob = bytesToHex(raw);
+            for (int i = 0; i < blob.length(); i += 512) {
+                tap("-- replay blob " + i + ": " + blob.substring(i, Math.min(blob.length(), i + 512)));
+            }
+        }
 
         if (raw != null && raw.length >= 4) {
             int[] q = new int[1];
@@ -3312,6 +3358,13 @@ public class ShadowApduService extends HostApduService {
             if (!t.isEmpty()) {
                 try {
                     TapLog.append(this, slot, "!! verdict: " + v);
+                } catch (Throwable ignored) { }
+                try {
+                    TapLog.append(this, slot, "-- deactivated reason=" + reason
+                            + " (" + (reason == DEACTIVATION_DESELECTED ? "DESELECTED"
+                                    : reason == DEACTIVATION_LINK_LOSS ? "LINK_LOSS" : "OTHER") + ")"
+                            + " apdus=" + apduCount
+                            + " sinceLastApdu=" + (SystemClock.elapsedRealtime() - lastApduAt) + "ms");
                 } catch (Throwable ignored) { }
             }
         } catch (Throwable ignored) { }
