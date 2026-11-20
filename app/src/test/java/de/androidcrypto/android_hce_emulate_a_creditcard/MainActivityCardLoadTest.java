@@ -101,6 +101,148 @@ public class MainActivityCardLoadTest {
                 c.certWarning.contains("9F46") && c.certWarning.contains("ICCKEY"));
     }
 
+    /**
+     * The other half of the guard the test above does not touch: once the
+     * user has hand-edited etAfl, a SECOND card block (same PAN/network,
+     * different 94) must not clobber that typed value. Only applyCardBlock()
+     * reads aflDirty/aipDirty (MainActivity.java ~1178) - this is the one
+     * test that actually exercises the guard, not just its absence.
+     */
+    @Test
+    public void typedAflSurvives_aSecondCardBlockOnTheSamePan() {
+        String block1 = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=08010100\n"
+                + "9F27=80\n"
+                + "9F36=0005\n";
+        type(etTrack2, block1);
+        assertEquals("08010100", etAfl.getText().toString().toUpperCase());
+
+        type(etAfl, "DEADBEEF");
+
+        String block2 = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=10020200\n"
+                + "9F27=80\n"
+                + "9F36=0006\n";
+        type(etTrack2, block2);
+
+        assertEquals("the user's typed AFL must survive the second block",
+                "DEADBEEF", etAfl.getText().toString().toUpperCase());
+    }
+
+    /**
+     * A card block with a DIFFERENT PAN is a different card - the typed AFL
+     * must NOT survive this time, unlike the same-PAN case above. The PAN
+     * compare runs before etPan is overwritten (MainActivity.java, right
+     * before applyCardBlock()'s own binding=true block).
+     */
+    @Test
+    public void typedAflIsResetByACardBlockOnADifferentPan() {
+        String block1 = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=08010100\n"
+                + "9F27=80\n"
+                + "9F36=0005\n";
+        type(etTrack2, block1);
+        assertEquals("08010100", etAfl.getText().toString().toUpperCase());
+
+        type(etAfl, "DEADBEEF");
+
+        String block2 = "5A=5555555555557777\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=10020200\n"
+                + "9F27=80\n"
+                + "9F36=0006\n";
+        type(etTrack2, block2);
+
+        assertEquals("a different PAN's own AFL must win - the old typed value is stale",
+                "10020200", etAfl.getText().toString().toUpperCase());
+    }
+
+    /**
+     * applyDump()'s bare-track2 path (MainActivity.java ~1075) now skips its
+     * own etAfl clear entirely when aflDirty is already true, instead of
+     * clearing the box visually and only guarding the flag. Same PAN here,
+     * so the flag survives (same PAN-change test applyCardBlock() uses) and
+     * the typed value must still be sitting in the box afterward, untouched
+     * by either the dump or a follow-up card block on that same PAN.
+     */
+    @Test
+    public void aflDirtySurvivesABareTrack2OnTheSamePan() {
+        String block = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=08010100\n"
+                + "9F27=80\n"
+                + "9F36=0005\n";
+        type(etTrack2, block);
+
+        type(etAfl, "DEADBEEF");
+        assertEquals("DEADBEEF", etAfl.getText().toString().toUpperCase());
+
+        type(etTrack2, "5555555555554444=29122015678");
+        assertEquals("aflDirty survived the same-PAN bare track2 - the clear must be skipped",
+                "DEADBEEF", etAfl.getText().toString().toUpperCase());
+
+        String block2 = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=10020200\n"
+                + "9F27=80\n"
+                + "9F36=0006\n";
+        type(etTrack2, block2);
+
+        assertEquals("aflDirty must have survived the same-PAN bare track2 too - "
+                        + "the typed value stays, not the new block's own 94",
+                "DEADBEEF", etAfl.getText().toString().toUpperCase());
+    }
+
+    /**
+     * The other half: a bare track2 on a DIFFERENT PAN resets aflDirty (same
+     * PAN-change test as above, this time actually tripping it), so a
+     * follow-up card block on THAT new PAN is free to fill its own 94 again.
+     */
+    @Test
+    public void aBareTrack2OnADifferentPanResetsAflDirty() {
+        String block = "5A=5555555555554444\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=08010100\n"
+                + "9F27=80\n"
+                + "9F36=0005\n";
+        type(etTrack2, block);
+
+        type(etAfl, "DEADBEEF");
+        assertEquals("DEADBEEF", etAfl.getText().toString().toUpperCase());
+
+        type(etTrack2, "5555555555557777=29122015678");
+        assertEquals("", etAfl.getText().toString());
+
+        String block2 = "5A=5555555555557777\n"
+                + "5F24=291231\n"
+                + "84=A0000000049999\n"
+                + "82=5800\n"
+                + "94=10020200\n"
+                + "9F27=80\n"
+                + "9F36=0006\n";
+        type(etTrack2, block2);
+
+        assertEquals("aflDirty must have been reset by the different-PAN bare track2",
+                "10020200", etAfl.getText().toString().toUpperCase());
+    }
+
     /** The task's own test: the tile shows the card after save. */
     @Test
     public void tileShowsTheCardAfterSave() {

@@ -208,6 +208,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean dumping = false;
     private boolean suppressResumeStatus = false;
 
+    /** Set true the moment the user edits etAfl/etAip by hand; not read anywhere yet. */
+    private boolean aflDirty, aipDirty;
+
     private String appliedProfile = "";
 
     /** One scan at a time. A second press cancels instead of stacking threads. */
@@ -282,6 +285,14 @@ public class MainActivity extends AppCompatActivity {
     private void scheduleCollect() {
         ui.removeCallbacks(collectNow);
         ui.postDelayed(collectNow, 250);
+    }
+
+    /** A TextWatcher reduced to the one method most listeners here actually need. */
+    private static class SimpleWatcher implements TextWatcher {
+        public final void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+        public final void onTextChanged(CharSequence s, int a, int b, int c) { }
+        public final void afterTextChanged(Editable s) { after(); }
+        void after() { }
     }
 
     @Override
@@ -410,6 +421,13 @@ public class MainActivity extends AppCompatActivity {
                     : "Offline TC force off - the ladder decides");
         });
 
+        etAfl.addTextChangedListener(new SimpleWatcher() {
+            void after() { if (!binding) aflDirty = true; }
+        });
+        etAip.addTextChangedListener(new SimpleWatcher() {
+            void after() { if (!binding) aipDirty = true; }
+        });
+
         TextWatcher watcher = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -440,6 +458,13 @@ public class MainActivity extends AppCompatActivity {
                 ui.removeCallbacksAndMessages(FILLER_TOKEN);
                 ui.postDelayed(() -> {
                     if (binding || dumping) return;
+                    // Read BEFORE autoFill() - for anything track2Like,
+                    // autoFill() runs its own identical "is this a track 2"
+                    // check first and already overwrites etPan with the
+                    // same new PAN applyDump() is about to see, so reading
+                    // etPan only after autoFill() always finds "unchanged"
+                    // and applyDump()'s own PAN-change reset never fires.
+                    String panBeforeAutoFill = digits(t(etPan));
                     autoFill();
                     maybeProfile();
 
@@ -456,7 +481,7 @@ public class MainActivity extends AppCompatActivity {
                     } else if (chainLike) {
                         applyChain(t2);
                     } else if (track2Like) {
-                        applyDump(t2);
+                        applyDump(t2, panBeforeAutoFill);
                     } else if (looksLikeCardBlock(t2)) {
                         applyCardBlock(t2);
                     }
@@ -803,7 +828,7 @@ public class MainActivity extends AppCompatActivity {
         if (newNet || t(etAtc).isEmpty()) etAtc.setText(f[4]);
         if (shape && (t(etMsd).isEmpty() || t(etMsd).equals(prevMsd))) etMsd.setText(msdDefault(net));
         if (shape && (t(etCid).isEmpty() || t(etCid).equalsIgnoreCase(prevCid))) etCid.setText(cidDefault(net));
-        if (newNet) etAfl.setText("");
+        if (newNet) { aflDirty = false; etAfl.setText(""); }
         if (prefs.getString(key(current, "script"), "").trim().isEmpty()) etScript.setText("");
 
         String[] known = knownFor(pan);
@@ -994,7 +1019,19 @@ public class MainActivity extends AppCompatActivity {
      * The CSC is remembered so a later reseed of the same PAN reuses it instead
      * of falling back to zeros.
      */
+    /** Convenience for the one other caller (the "Load" dialog), which runs before autoFill() ever touches etPan. */
     private void applyDump(String raw) {
+        applyDump(raw, digits(t(etPan)));
+    }
+
+    /**
+     * panBeforeAutoFill is the PAN this slot held before THIS filler pass
+     * started - not necessarily what etPan shows right now. For anything
+     * track2Like (this method's own precondition), autoFill() already ran
+     * first and already wrote the new PAN into etPan, so comparing against
+     * etPan here would always see "unchanged" - see the filler's own doc.
+     */
+    private void applyDump(String raw, String panBeforeAutoFill) {
         String[] d;
         try {
             d = parseDump(raw);
@@ -1007,6 +1044,14 @@ public class MainActivity extends AppCompatActivity {
         if (net.isEmpty()) {
             status("dump: " + d[0] + " is not a network this app serves", COL_STALE);
             return;
+        }
+
+        // Same PAN-change test as applyCardBlock() - a different PAN is a
+        // different card, so a dirty flag from editing the PREVIOUS one
+        // must not survive onto this one.
+        if (!panBeforeAutoFill.equals(d[0])) {
+            aipDirty = false;
+            aflDirty = false;
         }
 
         dumping = true;
@@ -1027,9 +1072,11 @@ public class MainActivity extends AppCompatActivity {
 
         applyProfile(d[0], net);
 
-        binding = true;
-        etAfl.setText("");
-        binding = false;
+        if (!aflDirty) {
+            binding = true;
+            etAfl.setText("");
+            binding = false;
+        }
         collect();
 
         // A bare track 2 never carries the certificate chain - reusing
@@ -1134,6 +1181,15 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        // A different PAN is a different card - a dirty flag from editing
+        // the PREVIOUS one must not survive onto this one. The same PAN
+        // re-applied (e.g. a second, corrected block) keeps the flag, so
+        // the guard below still means something - see that guard's own doc.
+        if (!digits(t(etPan)).equals(pan)) {
+            aipDirty = false;
+            aflDirty = false;
+        }
+
         dumping = true;
 
         String expiry6 = c.expiry();
@@ -1156,8 +1212,8 @@ public class MainActivity extends AppCompatActivity {
         // defaults - only when the block actually supplied them.
         binding = true;
         if (c.aid() != null) etAid.setText(c.aid());
-        if (c.tag("82") != null) etAip.setText(c.tag("82"));
-        if (c.tag("94") != null) etAfl.setText(c.tag("94"));
+        if (c.tag("82") != null && !aipDirty) etAip.setText(c.tag("82"));
+        if (c.tag("94") != null && !aflDirty) etAfl.setText(c.tag("94"));
         if (c.tag("9F27") != null) etCid.setText(c.tag("9F27"));
         if (c.tag("9F36") != null) etAtc.setText(c.tag("9F36"));
         if (c.acKey() != null) etMkac.setText(c.acKey());
@@ -1597,6 +1653,11 @@ public class MainActivity extends AppCompatActivity {
 
         binding = true;
         current = i;
+
+        // A different slot is a different card - the previous slot's hand
+        // edits must not suppress this slot's own stored aip/afl below.
+        aipDirty = false;
+        aflDirty = false;
 
         // The fallbacks have to come from the profile, not from a constant. The
         // untouched test in applyProfile() compares against the network's own
@@ -3246,8 +3307,10 @@ public class MainActivity extends AppCompatActivity {
         etDiscretionary.setText(disc);
         etAid.setText(aid);
         if (!iad.isEmpty()) etIad.setText(iad);
+        aipDirty = false;
         if (!aip.isEmpty()) etAip.setText(aip);
         if (!atc.isEmpty()) etAtc.setText(nextAtc(atc));
+        aflDirty = false;
         etAfl.setText("");
         etCid.setText("");
         etScript.setText("");
