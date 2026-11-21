@@ -411,6 +411,9 @@ public class ShadowApduService extends HostApduService {
      */
     private void tap(String s) {
         try {
+            Log.w(TAG, s);
+        } catch (Throwable ignored) { }
+        try {
             synchronized (tapLog) {
                 tapLog.append(s).append('\n');
                 if (tapLog.length() > 32000) tapLog.delete(0, 16000);
@@ -1871,9 +1874,15 @@ public class ShadowApduService extends HostApduService {
 
         tap("-- gpo mc box=" + p("aip", "") + " served=" + bytesToHex(aip));
 
+        byte[] rec = msdRecord();
+        byte[] t = rec == null ? null : findTag(rec, 0x9F6B);
+        if (t == null && rec != null) t = findTag(rec, 0x57);
+        if (t == null) t = track2();
+
         return tlv(0x77, cat(
                 tlv(0x82, aip),
-                tlv(0x94, hex(AFL_MC_PROBE_WITH_AID))));
+                tlv(0x94, hex(AFL_MC_PROBE_WITH_AID)),
+                tlv(0x9F6B, t)));
     }
 
     /**
@@ -1945,6 +1954,7 @@ public class ShadowApduService extends HostApduService {
 
     @Override
     public byte[] processCommandApdu(byte[] apdu, Bundle extras) {
+        Log.w(TAG, "APDU ins=" + (apdu == null ? "null" : String.format("%02X", apdu[1] & 0xFF)));
         try {
             if (apdu == null || apdu.length < 4) return SW_MALFORMED;
 
@@ -2233,7 +2243,19 @@ public class ShadowApduService extends HostApduService {
         }
     }
 
+    /**
+     * Times selectInner() so a slow SELECT response - a real candidate for
+     * the reader cutting the field before a GPO ever arrives, see
+     * term_card0_log.txt's gate=OFF taps - is logged instead of assumed.
+     */
     private byte[] select(byte[] apdu) {
+        long t0 = SystemClock.elapsedRealtime();
+        byte[] out = selectInner(apdu);
+        tap("-- select duration=" + (SystemClock.elapsedRealtime() - t0) + "ms");
+        return out;
+    }
+
+    private byte[] selectInner(byte[] apdu) {
         int lc = lcOf(apdu);
         int off = dataOff(apdu);
         if (apdu.length < off + lc) return SW_MALFORMED;
@@ -2306,7 +2328,11 @@ public class ShadowApduService extends HostApduService {
                 tlv(0x8C, hex(isMsd() ? CDOL_MSD : dol("cdol1", CDOL1))),
                 tlv(0x9F11, new byte[]{0x01}),
                 tlv(0x9F12, label.getBytes(StandardCharsets.US_ASCII)),
-                tlv(0x9F2A, new byte[]{(byte) kernelFor(bytesToHex(name))}),
+                // EXPERIMENTAL: 03 (Visa qVSDC's kernel id), not kernelFor()'s
+                // own 02 for this AID's A000000004 RID - term-new12.log-era
+                // probe, see this method's own doc for why. PPSE's own 9F2A
+                // (oneAppPpse(), appEntry()) is untouched and still kernelFor().
+                tlv(0x9F2A, new byte[]{(byte) 0x03}),
                 tlv(0x9F38, hex(dol("pdol", PDOL))));
         byte[] inner = cat(tlv(0x84, name), tlv(0xA5, prop));
         return cat(tlv(0x6F, inner), SW_OK);
@@ -3343,6 +3369,7 @@ public class ShadowApduService extends HostApduService {
      */
     @Override
     public void onDeactivated(int reason) {
+        Log.w(TAG, "onDeactivated enter reason=" + reason);
         final String t = logText();
         final String slot = sel();
         tapOpen = false;
