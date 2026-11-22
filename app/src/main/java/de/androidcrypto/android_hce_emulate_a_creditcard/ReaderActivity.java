@@ -453,6 +453,7 @@ public class ReaderActivity extends AppCompatActivity implements NfcAdapter.Read
         writeDump(dump.toByteArray(), dumpResponses);
 
         byte[] cdol1 = null;
+        byte[] cdol2 = null;
         for (byte[] rec : records) {
             if (rPan.isEmpty()) {
                 List<byte[]> l = new ArrayList<>();
@@ -496,6 +497,11 @@ public class ReaderActivity extends AppCompatActivity implements NfcAdapter.Read
                 collect(rec, 0x8C, l);
                 if (!l.isEmpty()) cdol1 = l.get(0);
             }
+            if (cdol2 == null) {
+                List<byte[]> l = new ArrayList<>();
+                collect(rec, 0x8D, l);
+                if (!l.isEmpty()) cdol2 = l.get(0);
+            }
         }
         if (!rHolder.isEmpty()) stage("cap_holder", rHolder);
 
@@ -528,6 +534,9 @@ public class ReaderActivity extends AppCompatActivity implements NfcAdapter.Read
                 byte[] rsp = send(iso, cmd);
                 stage("cap_genaccmd", bytesToHex(cmd));
                 stage("cap_rawgenac", bytesToHex(rsp));
+                String sw1 = rsp.length >= 2
+                        ? bytesToHex(Arrays.copyOfRange(rsp, rsp.length - 2, rsp.length))
+                        : "?";
                 List<byte[]> l = new ArrayList<>();
                 collect(rsp, 0x9F36, l);
                 if (!l.isEmpty()) rAtc = bytesToHex(l.get(0));
@@ -537,9 +546,26 @@ public class ReaderActivity extends AppCompatActivity implements NfcAdapter.Read
                 l.clear();
                 collect(rsp, 0x9F26, l);
                 String arqc = l.isEmpty() ? "" : bytesToHex(l.get(0));
-                log("   CID  " + (cid.isEmpty() ? "?" : cid));
+                log("   GENAC#1 p1=80 cid=" + (cid.isEmpty() ? "?" : cid) + " sw=" + sw1);
                 log("   ATC  " + (rAtc.isEmpty() ? "?" : rAtc));
                 log("   ARQC " + (arqc.isEmpty() ? "?" : arqc));
+
+                if (sw1.equals("9000") && cdol2 != null && cdol2.length > 0) {
+                    byte[] cdol2Data = buildCdolData(cdol2);
+                    byte[] cmd2 = apdu(0x80, 0xAE, 0x40, 0x00, cdol2Data, 0x00);
+                    byte[] rsp2 = send(iso, cmd2);
+                    stage("cap_genac2cmd", bytesToHex(cmd2));
+                    stage("cap_rawgenac2", bytesToHex(rsp2));
+                    String sw2 = rsp2.length >= 2
+                            ? bytesToHex(Arrays.copyOfRange(rsp2, rsp2.length - 2, rsp2.length))
+                            : "?";
+                    List<byte[]> l2 = new ArrayList<>();
+                    collect(rsp2, 0x9F27, l2);
+                    String cid2 = l2.isEmpty() ? "" : bytesToHex(l2.get(0));
+                    log("   GENAC#2 p1=40 cid=" + (cid2.isEmpty() ? "?" : cid2) + " sw=" + sw2);
+                } else {
+                    log("   GENAC#2 skipped - AE#1 " + sw1);
+                }
             } catch (IOException e) {
                 log("   GENERATE AC failed: " + e.getMessage());
             }
