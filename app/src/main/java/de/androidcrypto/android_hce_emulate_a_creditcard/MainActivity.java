@@ -52,13 +52,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String CDOL1   = "9F02069F03069F1A0295055F2A029A039C019F3704";
     private static final String CDOL2   = "9F02069F03069F1A0295055F2A029A039C019F37049F3403";
 
-    /**
-     * Only used to render the preview line when the CVM box is empty. The bytes
-     * on the wire come from the same value in ShadowApduService; this copy has
-     * to agree with it or the preview lies.
-     */
-    private static final String CVMLIST = "000003E8000003E81F061E07";
-
     /** Eight zero DD bytes, for the menu-driven skeleton builder. */
     private static final String DD_ZERO = "0000000000000000";
 
@@ -1834,7 +1827,7 @@ public class MainActivity extends AppCompatActivity {
                 .append(track2.isEmpty() ? "(empty)" : hexOf(track2)).append('\n');
 
         sb.append("CVM list   : ")
-                .append(t(etCvmlist).isEmpty() ? "service constant (" + CVMLIST + ")"
+                .append(t(etCvmlist).isEmpty() ? "service constant (" + ShadowApduService.CVMLIST + ")"
                         : t(etCvmlist).toUpperCase())
                 .append('\n');
         sb.append("record     : synthetic SFI 1 rec 1, built from these fields\n");

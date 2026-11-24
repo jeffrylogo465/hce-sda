@@ -194,8 +194,20 @@ public class ShadowApduService extends HostApduService {
      *   1F 03 - no CVM required, if the terminal supports the CVM, the
      *           fallback were CDCVM itself ever unsuccessful.
      * No signature rule remains, so nothing prompts for one.
+     *
+     * KEPT AT CDCVM-FIRST ON PURPOSE, not switched to a real Mastercard
+     * dump's own online-PIN-first list (000000000000000042031E031F03,
+     * inter_claudiones.credito.json): online PIN cannot verify against a
+     * dummy MK-AC, and 5E07 is the better fallback for this app's own
+     * no-real-key situation regardless of what a real card ships.
+     *
+     * PACKAGE-VISIBLE, NOT PRIVATE, so MainActivity's own preview text can
+     * read this value directly instead of keeping a second literal - that
+     * second copy (MainActivity.CVMLIST) had already drifted to a
+     * different value than this one, exactly the risk its own doc
+     * comment named and did not prevent.
      */
-    private static final String CVMLIST = "00000000000000005E071F03";
+    static final String CVMLIST = "00000000000000005E071F03";
 
     /** Documentation only - the terminal owns 9F34 and sends it in CDOL1. */
     private static final String CVM_RESULTS = "1F0302";
@@ -779,6 +791,28 @@ public class ShadowApduService extends HostApduService {
         String v = p("msd", "0").trim();
         if (v.equals("1") || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")) return true;
         return activeProfile().msd();
+    }
+
+    /**
+     * Whether syntheticRecord()'s 8E is forced to CVMLIST, ignoring
+     * whatever the "cvmlist" box holds - same box-overriding-the-default
+     * concern cvmBox() exists to catch (a typed value that passes shape
+     * validation but is still the wrong thing to serve), just a stronger
+     * guarantee than a default: a typed, shape-valid box normally wins
+     * over CVMLIST, and this makes it not.
+     *
+     * NARROWER THAN IT MIGHT LOOK: a QA reader app's own "bypass password"
+     * toggle (traced this session - ServicoPay.EditarConfig(),
+     * ConfigManager.BurlaSenha) forces its CVM list to CDCVM-first AND
+     * zeros 9F0D/9F0E/9F0F when enabled. Here CDCVM-first is already
+     * CVMLIST, the unconditional default (see cvmBox()), and 9F0D/9F0E/
+     * 9F0F in syntheticRecord() are already hardcoded "0000000000"
+     * unconditionally, toggle or not - nothing to add for either of
+     * those. This toggle's only actual effect is the 8E override below.
+     */
+    private boolean isBypass() {
+        String v = p("bypass", "0").trim();
+        return v.equals("1") || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on");
     }
 
     /**
@@ -1768,6 +1802,12 @@ public class ShadowApduService extends HostApduService {
      * malformed box serves the constant. 8E is checked for shape by cvmBox(),
      * not by TlvValidator - a CVM list carries no tags.
      *
+     * isBypass() OVERRIDES 8E TO CVMLIST OUTRIGHT, skipping cvmBox()
+     * entirely - a typed, shape-valid "cvmlist" box normally wins over the
+     * default, and this is the one case that must not honour it. See
+     * isBypass()'s own doc for why 9F0D/9F0E/9F0F need no equivalent
+     * override: they are already unconditional zeros above, toggle or not.
+     *
      * 9F4A (the SDA tag list) is 82: a real Mastercard M/Chip card dump (a
      * QA reader app's own bundled test-card script, decompiled from its
      * .NET assembly) carries exactly this value in the record its own AFL
@@ -1799,7 +1839,7 @@ public class ShadowApduService extends HostApduService {
                 tlv(0x9F4A, hex("82")),
                 tlv(0x8C, hex(dol("cdol1", CDOL1))),
                 tlv(0x8D, hex(dol("cdol2", CDOL2))),
-                tlv(0x8E, hex(cvmBox())),
+                tlv(0x8E, hex(isBypass() ? CVMLIST : cvmBox())),
                 tlv(0x9F0D, hex("0000000000")),
                 tlv(0x9F0E, hex("0000000000")),
                 tlv(0x9F0F, hex("0000000000")),

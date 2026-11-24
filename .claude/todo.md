@@ -125,10 +125,30 @@ mastercardGpo_msdFalse_stillYieldsThe77Template,
 aidGroup_includes1PayAlongside2Pay,
 selectApp_mastercard_honoursACustomAid_notTheHardcodedLiteral.
 
+9F6C = FFFF (Kernel 2's mag-stripe app version meaning, confirmed from
+inter_claudiones.credito.json) added to the MSD GPO payload - its absence
+could read as "MSD unsupported" to a Kernel 2 terminal. Committed as
+c11c949.
+
+CVMLIST decision: staying at 00000000000000005E071F03 - a real dump's own
+online-PIN-first list (000000000000000042031E031F03) can't verify against
+a dummy MK-AC, so CDCVM-first is still the better fallback here regardless
+of what a real card ships. MainActivity's own second copy of this constant
+had drifted to a THIRD, different value (000003E8000003E81F061E07) - fixed
+to read ShadowApduService.CVMLIST (now package-visible) instead of keeping
+its own literal, so there is one source of truth.
+
+New "bypass" toggle (isBypass(), box "bypass"): forces syntheticRecord()'s
+8E to CVMLIST outright, ignoring even a typed, shape-valid "cvmlist" box -
+narrower than the QA reader app's own "Bypass Password (MASTER)" toggle
+this mirrors, because CDCVM-first is already this app's default (nothing
+to force there) and 9F0D/9F0E/9F0F are already unconditional zeros in
+syntheticRecord() regardless of any box (nothing to add there either). The
+toggle's only real effect is the 8E override.
+
 Not installed or tapped - no terminal here to test against. The ODA-probe
 build (52e00e8) is still the one waiting on a register tap; this MSD work
-sits on top of it in the same working tree, not yet committed as its own
-commit.
+sits on top of it in the same working tree.
 
 # Next task (register, when back)
 

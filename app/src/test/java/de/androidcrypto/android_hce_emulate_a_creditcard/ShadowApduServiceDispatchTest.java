@@ -151,6 +151,51 @@ public class ShadowApduServiceDispatchTest {
         assertEquals("5E", list.substring(rule1At, rule1At + 2));
     }
 
+    /**
+     * Baseline, not new behaviour: a typed, shape-valid "cvmlist" box wins
+     * over CVMLIST - cvmBox()'s own contract. Documented here so
+     * readRecord_bypass_forces8EToCvmlist_ignoringTheTypedBox() below has
+     * something to contrast against in the same file.
+     */
+    @Test
+    public void readRecord_typedCvmlistBox_isHonoured() {
+        // 16 for the amounts (X=Y=0) plus two 2-byte rules (1E03 signature
+        // always, 1F03 no-CVM always) - 24 hex chars, cvmBox()'s own shape
+        // check (>=20, and a whole number of 4-char rules past the first
+        // 16) passes.
+        String typed = "0000000000000000" + "1E031F03";
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_cvmlist", typed).commit();
+
+        String rec = Hex.toHex(send("00B2010C00"));
+        int at = rec.indexOf("8E0C") + 4;
+        assertEquals(typed, rec.substring(at, at + typed.length()));
+    }
+
+    /**
+     * isBypass(): forces 8E to CVMLIST outright, ignoring a typed
+     * "cvmlist" box even when that box is shape-valid and would normally
+     * be honoured (see the test just above) - see isBypass()'s own doc.
+     * 9F0D/9F0E/9F0F need no equivalent assertion: syntheticRecord()
+     * already serves them as unconditional zeros regardless of this box.
+     */
+    @Test
+    public void readRecord_bypass_forces8EToCvmlist_ignoringTheTypedBox() {
+        // Same shape-valid shape as the test above, deliberately different
+        // content (0203 online PIN, not 1E03 signature) so a test failure
+        // that served the typed box instead would be visibly distinguishable
+        // from one that served CVMLIST correctly.
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_cvmlist", "000000000000000002031F03")
+                .putString("card0_bypass", "1")
+                .commit();
+
+        String rec = Hex.toHex(send("00B2010C00"));
+        int at = rec.indexOf("8E0C") + 4;
+        assertEquals("the typed box must be ignored outright, not merged with it",
+                "00000000000000005E071F03", rec.substring(at, at + 24));
+    }
+
     @Test
     public void readRecord_missingRecord_returns6A83() {
         assertEquals("6A83", Hex.toHex(send("00B20000")));
