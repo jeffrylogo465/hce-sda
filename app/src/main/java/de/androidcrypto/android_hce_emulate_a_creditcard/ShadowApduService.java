@@ -1985,12 +1985,33 @@ public class ShadowApduService extends HostApduService {
     private static final String AIP_MC_MSD = "5840";
 
     /**
+     * 9F6C under Mastercard's own Kernel 2 is NOT the Visa CTQ meaning of
+     * the same tag number - it is the mag-stripe application version
+     * number. Confirmed from a real Mastercard M/Chip card dump
+     * (inter_claudiones.credito.json, the same QA reader app's bundled
+     * test-card script already used for the ODA cell): that card serves
+     * 9F6C = FFFF in its own key-chain record. FFFF reads as an unset/
+     * placeholder sentinel, not a real version number this app happens to
+     * know, but it is the real card's own value, not an invented one.
+     *
+     * Included here, not left out the way the ODA cell's placeholder tags
+     * are: a Kernel 2 MSD terminal can expect this tag in the MSD
+     * exchange, and its absence would read as "MSD unsupported" - a
+     * different, less useful failure than the one a wrong-but-present
+     * value produces.
+     */
+    private static final String MSD_9F6C_APP_VERSION = "FFFF";
+
+    /**
      * The Mastercard MSD GPO, built from the card's own state: format 1 -
-     * 80 { AIP byte 1, AIP byte 2, 9F6B track } - no AFL, no inner 77/82/94
-     * wrapper. MSD is a single round trip by design: the terminal gets the
-     * track-equivalent data straight out of the GPO and never sends READ
-     * RECORD at all, unlike the EMV path (mastercardGpoFromCard(), AFL
-     * pointing at syntheticRecord()/keyChainRecord()).
+     * 80 { AIP byte 1, AIP byte 2, 9F6B track, 9F6C app version } - no AFL,
+     * no inner 77/82/94 wrapper. MSD is a single round trip by design: the
+     * terminal gets the track-equivalent data straight out of the GPO and
+     * never sends READ RECORD at all, unlike the EMV path
+     * (mastercardGpoFromCard(), AFL pointing at
+     * syntheticRecord()/keyChainRecord()) - so 9F6C goes here, in the only
+     * record this exchange ever serves, not in a separate READ RECORD
+     * response the real card keeps it in.
      *
      * This is a NEW shape, not the generic msd-vs-emv split gpo() already
      * has (format 1, AIP+AFL, the track read later via READ RECORD) - that
@@ -2004,11 +2025,13 @@ public class ShadowApduService extends HostApduService {
     private byte[] mastercardMsdGpo() {
         byte[] aip = hex(AIP_MC_MSD);
         byte[] track = track2RawForMsdGpo();
+        byte[] appVersion = hex(MSD_9F6C_APP_VERSION);
 
         tap("-- msd: mastercard gpo aip=" + bytesToHex(aip)
-                + " 9f6b=" + bytesToHex(track));
+                + " 9f6b=" + bytesToHex(track)
+                + " 9f6c=" + bytesToHex(appVersion));
 
-        return tlv(0x80, cat(aip, tlv(0x9F6B, track)));
+        return tlv(0x80, cat(aip, tlv(0x9F6B, track), tlv(0x9F6C, appVersion)));
     }
 
     /**

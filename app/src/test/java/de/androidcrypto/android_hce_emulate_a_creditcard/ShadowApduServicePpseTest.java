@@ -526,13 +526,19 @@ public class ShadowApduServicePpseTest {
     }
 
     /**
-     * mastercardMsdGpo(): format 1 - 80 { AIP 58 40, 9F6B track } - no AFL,
-     * no inner 77/82/94 wrapper, no READ RECORD needed. This replaces
-     * msdAip()'s generic bit-masking of the canned EMV-mode script line for
-     * Mastercard specifically (see the dispatch site's own doc): that line
-     * is the 77/82/94 template, and masking its AIP bits left the AFL and
-     * everything else EMV-shaped in place - neither a real MSD payload nor
-     * a coherent EMV one.
+     * mastercardMsdGpo(): format 1 - 80 { AIP 58 40, 9F6B track, 9F6C app
+     * version } - no AFL, no inner 77/82/94 wrapper, no READ RECORD
+     * needed. This replaces msdAip()'s generic bit-masking of the canned
+     * EMV-mode script line for Mastercard specifically (see the dispatch
+     * site's own doc): that line is the 77/82/94 template, and masking its
+     * AIP bits left the AFL and everything else EMV-shaped in place -
+     * neither a real MSD payload nor a coherent EMV one.
+     *
+     * 9F6C = FFFF is the real Mastercard M/Chip card dump's own value
+     * (inter_claudiones.credito.json) for Kernel 2's meaning of that tag -
+     * mag-stripe application version, not Visa's CTQ - included so a
+     * Kernel 2 MSD terminal that expects it does not read its absence as
+     * "MSD unsupported."
      *
      * The track2 box here (21 significant hex digits after the PAN/D/expiry
      * shape) is short on purpose, to also exercise the pad-to-37 case in
@@ -540,7 +546,7 @@ public class ShadowApduServicePpseTest {
      * below isolates the boundary cases on their own.
      */
     @Test
-    public void mastercardMsdGpo_isFormat1AipPlus9F6B_byteExact() {
+    public void mastercardMsdGpo_isFormat1AipPlus9F6BPlus9F6C_byteExact() {
         setProfile("MASTERCARD");
         setMsd(true);
         setTrack2Box("4111111111111111D2912");
@@ -549,7 +555,7 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
 
         String gpo = send("80A8000002830000");
-        assertEquals("801858409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9000", gpo);
+        assertEquals("801D58409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9F6C02FFFF9000", gpo);
     }
 
     /**
@@ -559,7 +565,8 @@ public class ShadowApduServicePpseTest {
      * odd-length pad (one more trailing F) always makes the final 9F6B
      * value 38 hex characters, 19 bytes, matching Mastercard's fixed MSD
      * track-2 field length. All three boundaries land on the same 19-byte
-     * shape; only the long case's content differs after truncation.
+     * shape; only the long case's content differs after truncation. 9F6C
+     * trails every case unchanged - it is not track2-derived.
      */
     @Test
     public void track2RawForMsdGpo_padsOrTruncatesToExactly37Chars() {
@@ -571,7 +578,7 @@ public class ShadowApduServicePpseTest {
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
         assertEquals("short box: padded with F's to 37, then hexLenient's own trailing F",
-                "801858409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9000",
+                "801D58409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9F6C02FFFF9000",
                 send("80A8000002830000"));
 
         setTrack2Box("4111111111111111D29122011123456789012345");
@@ -579,7 +586,7 @@ public class ShadowApduServicePpseTest {
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
         assertEquals("long box: truncated to the first 37 chars, then hexLenient's trailing F",
-                "801858409F6B134111111111111111D29122011123456789012F9000",
+                "801D58409F6B134111111111111111D29122011123456789012F9F6C02FFFF9000",
                 send("80A8000002830000"));
 
         setTrack2Box("0123456789012345678901234567890123456");
@@ -587,7 +594,7 @@ public class ShadowApduServicePpseTest {
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
         assertEquals("exactly-37 box: untouched at that stage, then hexLenient's trailing F",
-                "801858409F6B130123456789012345678901234567890123456F9000",
+                "801D58409F6B130123456789012345678901234567890123456F9F6C02FFFF9000",
                 send("80A8000002830000"));
     }
 
