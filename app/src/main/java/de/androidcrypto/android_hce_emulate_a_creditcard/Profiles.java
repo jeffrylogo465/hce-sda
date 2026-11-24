@@ -13,28 +13,38 @@ public final class Profiles {
 
     private static final String PPSE = "325041592E5359532E4444463031";
 
-    // Mastercard AIP 58 00. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
+    // Mastercard AIP 58 80. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
     // 0x08 TRM 0x04 issuer auth 0x02 on-device CVM 0x01 CDA.
     // 0x58 = CV + TRM + SDA - no DDA, no CDA, no issuer auth, CDCVM comes
-    // from setCdcvm() on top. Byte 2 is 0x00: neither the mag-stripe bit
-    // nor the EMV-mode bit.
+    // from setCdcvm() on top. Byte 2 is 0x80, NOT 0x00: for Mastercard's
+    // own contactless kernel this bit is "EMV mode supported", and with it
+    // clear the kernel drops to its MSD-equivalent flow instead of EMV
+    // mode - which is exactly the 1A00-served (AIP byte1 CV+TRM+CDCVM,
+    // byte2 clear) configuration that stalled four taps running before
+    // the 9F6B/PAN register run ever reached GENERATE AC. That run's one
+    // receipted completion served 1A80 - byte 2 0x80 - but that 0x80 came
+    // from the "aip" box typed in for that tap, never from this constant;
+    // the default base other taps actually exercise was still 1800/byte2
+    // 0x00 under the box. This had never been fixed, only masked by
+    // whichever box was set at the time.
     //
-    // HISTORY: this was 1800 (no ODA bit at all) through the register tap
-    // that reached GENERATE AC and got a receipted DECLINE - full protocol
-    // completion, TVR byte 1 = 80 (ODA not performed, because this AIP
-    // claimed none). That tap closed the "stalls at GPO" question (9F6B
-    // was the other variable that register run isolated; see
-    // ShadowApduService.mastercardGpoFromCard()'s own doc) but opened this
-    // one: a terminal that forces online when ODA is not performed cannot
-    // approve a dummy-key offline TC here regardless of what else changes.
-    // Before that, it briefly claimed SDA alone (5840 - term-new6.log /
-    // term-new9.log / term-new10.log) to get a real kernel past an
-    // immediate no-CAM stop; that also stalled and was reverted.
+    // HISTORY: this was 1800 (no ODA bit at all, byte 2 0x00) through the
+    // register tap that reached GENERATE AC and got a receipted DECLINE -
+    // full protocol completion, TVR byte 1 = 80 (ODA not performed,
+    // because this AIP claimed none). That tap closed the "stalls at GPO"
+    // question (9F6B was the other variable that register run isolated;
+    // see ShadowApduService.mastercardGpoFromCard()'s own doc) but opened
+    // this one: a terminal that forces online when ODA is not performed
+    // cannot approve a dummy-key offline TC here regardless of what else
+    // changes. Before that, it briefly claimed SDA alone (5840 -
+    // term-new6.log / term-new9.log / term-new10.log) to get a real
+    // kernel past an immediate no-CAM stop; that also stalled and was
+    // reverted.
     //
     // It briefly claimed DDA + CDA instead of SDA. A real Mastercard M/Chip
     // card dump (a QA reader app's own bundled test-card script, decompiled
     // from its .NET assembly) showed the actual shape a working card uses:
-    // AIP 5980 (SDA AND CDA both claimed, plus mag-stripe support), 9F4A
+    // AIP 5980 (SDA AND CDA both claimed, byte 2's EMV-mode bit set), 9F4A
     // (SDA tag list) = 82, key material (CA index/issuer cert/issuer
     // remainder) in a record the AFL does NOT flag for offline data
     // authentication, and the SDA signature itself (tag 93, Signed Static
@@ -47,7 +57,10 @@ public final class Profiles {
     // failed" this cell is trying to isolate. SDA is the one method this
     // profile can structurally approximate with placeholder-filled static
     // data and no live signing math - see ShadowApduService.keyChainRecord()
-    // and syntheticRecord()'s 9F4A.
+    // and syntheticRecord()'s 9F4A. The EMV-mode bit in byte 2 is not part
+    // of that ODA picture at all, but it is corrected here too - a card
+    // with no EMV-mode claim never reaches the ODA question in the first
+    // place, it just drops to MSD.
     //
     // EVERYTHING THIS CLAIMS IS STILL UNBACKED: no real CA/issuer key chain
     // exists, so SDA will still fail verification - the acceptance bar for
@@ -61,7 +74,7 @@ public final class Profiles {
     // mask to strip anyway. The boxed-AIP path (see
     // scriptedMastercardGpo_honoursATypedAipBox) is unaffected - it still
     // gets the strip.
-    private static final String AIP_MC = "5800";
+    private static final String AIP_MC = "5880";
 
     // Visa 58 00. b8 is mag-stripe, b7 is qVSDC. 0x58 = qVSDC + CV + TRM.
     //

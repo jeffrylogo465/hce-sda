@@ -411,13 +411,17 @@ public class ShadowApduServicePpseTest {
      * Mastercard M/Chip card dump (a QA reader app's own bundled
      * test-card script, decompiled from its .NET assembly) showed SDA,
      * not DDA/CDA, is the method a working card actually backs here -
-     * AIP_MC is now 5800 (CV + TRM + SDA, byte 2 still 0x00); setCdcvm()
-     * still runs on top, so the served byte 1 is CV + TRM + SDA + CDCVM
-     * (0x5A), not the bare 0x18. CDA is deliberately not claimed - it
-     * needs a live per-transaction signature (9F4B in GENERATE AC) this
-     * profile cannot produce. See Profiles.AIP_MC's own doc for the full
-     * history and why this is a probe (no real SDA key chain backs it
-     * yet) rather than a working ODA claim.
+     * AIP_MC is now 5880 (CV + TRM + SDA, byte 2 the EMV-mode bit 0x80 -
+     * NOT the 0x00 an earlier pass left it at: byte 2 clear makes
+     * Mastercard's kernel drop to MSD regardless of byte 1, which is the
+     * exact 1A00 configuration that stalled four taps running before the
+     * register run that finally reached GENERATE AC). setCdcvm() still
+     * runs on top, so the served AIP is 5A80: byte 1 CV + TRM + SDA +
+     * CDCVM (0x5A), byte 2 the EMV-mode bit (0x80). CDA is deliberately
+     * not claimed - it needs a live per-transaction signature (9F4B in
+     * GENERATE AC) this profile cannot produce. See Profiles.AIP_MC's own
+     * doc for the full history and why this is a probe (no real SDA key
+     * chain backs it yet) rather than a working ODA claim.
      *
      * 94 (AFL) is now TWO entries: 08010101 (SFI 1 rec 1, claimed for
      * offline data authentication, matching the SDA bit above) and
@@ -463,8 +467,9 @@ public class ShadowApduServicePpseTest {
         assertEquals("0x5A - 0x58 (CV+TRM+SDA) plus the CDCVM bit", 0x5A, b1);
 
         int b2 = aip[1] & 0xFF;
-        assertEquals("byte 2 must be exactly 0x00 - no mag-stripe, no EMV-mode claim",
-                0x00, b2);
+        assertEquals("byte 2 must be 0x80 - Mastercard's EMV-mode bit, or the kernel "
+                        + "drops to MSD regardless of byte 1 (AIP_MC's own doc)",
+                0x80, b2);
 
         byte[] afl = Emv.findTag(body, 0x94);
         assertEquals("AFL must be two entries now: SFI 1 rec 1 claimed for ODA, "

@@ -1819,23 +1819,41 @@ public class ShadowApduService extends HostApduService {
      * static issuer key chain, nothing dynamic, so this record carries
      * only the issuer side of the chain.
      *
-     * EVERY VALUE HERE IS A PLACEHOLDER, not real key material - 8F names
-     * a CA index this app has no matching key for, and 92/90/93 are just
-     * incrementing filler bytes, long enough to be the right EMV shape (a
-     * remainder, a cert-sized blob, a signature-sized blob) and nothing
-     * more. The acceptance bar for this cell is TVR byte 1 clearing on the
-     * next receipt - the terminal attempting ODA and failing on bad key
-     * material, not skipping ODA outright - not an approval. Working keys
+     * EVERY VALUE HERE IS STILL A PLACEHOLDER, not real key material - but
+     * 8F and the lengths of 90/92/93 now match the real card dump exactly
+     * (8F=FA, 90 144B, 92 4B, 93 112B), not an arbitrary filler length:
+     * - 8F=FA on purpose, not a made-up index: a CA index this terminal's
+     *   own store does not recognise can make the kernel skip PKI/SDA
+     *   entirely rather than attempt and fail it, a different outcome
+     *   from the "ODA attempted and failed" this cell is isolating for.
+     *   Reusing the real card's own index is the best placeholder guess
+     *   at one this terminal's CA store actually has.
+     * - 90/93 are real-shaped lengths because a short cert or a short
+     *   signature fails as structurally malformed before the kernel ever
+     *   gets to checking the key material itself - a different failure
+     *   again, upstream of the one this cell is trying to produce.
+     * 92/90/93's bytes are still just incrementing filler, not a real
+     * remainder/cert/signature - the acceptance bar for this cell is TVR
+     * byte 1 clearing on the next receipt - the terminal attempting ODA
+     * and failing on bad key material, not skipping ODA outright or
+     * rejecting it as malformed - not an approval. Working keys
      * (CaKeySet/DumpChain/OdaVerifier already exist for the asset-card
      * dump path) are the next cell, not this one.
      */
     private byte[] keyChainRecord() {
         return tlv(0x70, cat(
-                tlv(0x8F, hex("01")),
+                tlv(0x8F, hex("FA")),
                 tlv(0x9F32, hex("03")),
-                tlv(0x92, hex("18191A1B1C1D1E1F")),
-                tlv(0x90, hex("000102030405060708090A0B0C0D0E0F1011121314151617")),
-                tlv(0x93, hex("4041424344454647"))));
+                tlv(0x92, hex("00010203")),
+                tlv(0x90, hex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+                        + "202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F"
+                        + "404142434445464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F"
+                        + "606162636465666768696A6B6C6D6E6F707172737475767778797A7B7C7D7E7F"
+                        + "808182838485868788898A8B8C8D8E8F")),
+                tlv(0x93, hex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+                        + "202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F"
+                        + "404142434445464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F"
+                        + "606162636465666768696A6B6C6D6E6F"))));
     }
 
     /**
@@ -1892,11 +1910,13 @@ public class ShadowApduService extends HostApduService {
      *
      * AIP_MC's own doc has the full history - 1800 (no ODA, the register
      * run that reached GENERATE AC and got a receipted DECLINE, TVR byte 1
-     * 80), then briefly DDA+CDA, now SDA (5800) - a real Mastercard M/Chip
+     * 80), then briefly DDA+CDA, now SDA (5880) - a real Mastercard M/Chip
      * card dump's own shape, minus the CDA claim this profile cannot back
      * with a live signature. clearOdaKeepSda()/setCdcvm() do not run over
      * this default base (see AIP_MC's doc for why), so the actually-served
-     * byte 1 is CV + TRM + SDA + CDCVM (0x5A), not the bare 0x18.
+     * AIP is 5A80: byte 1 CV + TRM + SDA + CDCVM (0x5A), byte 2 the
+     * EMV-mode bit (0x80) - also AIP_MC's own fix, not an ODA bit at all,
+     * but without it the kernel never reaches the ODA question.
      *
      * 94: AFL_MC_PROBE_WITH_AID is now TWO entries, not one - 08 01 01 01
      * (SFI 1 rec 1, claimed for offline data authentication - the ordinary

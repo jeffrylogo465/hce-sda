@@ -87,13 +87,26 @@ public class ShadowApduServiceDispatchTest {
      * real card dump's own split. Sent directly, same as the SFI 1 test
      * above: readRecord() has no AFL gate of its own, that gate lives
      * earlier in dispatch and only applies once a GPO has run.
+     *
+     * 8F=FA and the 90/92/93 lengths (144/4/112 bytes) match the real
+     * card dump exactly, not an arbitrary placeholder shape - see
+     * keyChainRecord()'s own doc for why a wrong index or a short
+     * cert/signature would fail for a different reason than the one
+     * this cell is isolating for.
      */
     @Test
     public void readRecord_sfi2_returnsKeyChainRecordAnd9000() {
         assertEquals(
-                "70358F01019F320103920818191A1B1C1D1E1F"
-                        + "9018000102030405060708090A0B0C0D0E0F101112131415161793084041424344454647"
-                        + "9000",
+                "7082011" + "28F01FA9F32010392040001020390819000010203040506"
+                        + "0708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425"
+                        + "262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F4041424344"
+                        + "45464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F60616263"
+                        + "6465666768696A6B6C6D6E6F707172737475767778797A7B7C7D7E7F808182"
+                        + "838485868788898A8B8C8D8E8F9370000102030405060708090A0B0C0D0E0F"
+                        + "101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E"
+                        + "2F303132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D"
+                        + "4E4F505152535455565758595A5B5C5D5E5F606162636465666768696A6B6C"
+                        + "6D6E6F" + "9000",
                 Hex.toHex(send("00B2011400")));
     }
 

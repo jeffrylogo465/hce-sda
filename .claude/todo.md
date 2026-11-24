@@ -28,20 +28,33 @@ decompiled a QA/test-tool APK pulled off the register phone
 captured Mastercard M/Chip card's own GPO/record bytes. That changed the
 design:
 
-- AIP_MC -> 5800 (SDA claimed, not DDA/CDA - CDA needs a live
+- AIP_MC -> 5880 (SDA claimed, not DDA/CDA - CDA needs a live
   per-transaction signature, 9F4B in GENERATE AC, this profile cannot
   produce; SDA is the one method filler data can structurally approximate).
-  Served byte 1 is 0x5A (CV+TRM+SDA+CDCVM).
+  Byte 2 is 0x80, NOT 0x00: for Mastercard's own kernel that bit is
+  "EMV mode supported" - byte2 clear drops to MSD regardless of byte 1,
+  the exact 1A00 config that stalled four taps running before the
+  register run that reached GENERATE AC. That run's one 1A80 receipt had
+  the 0x80 from the typed "aip" box, never from this constant - the
+  default base was never actually fixed, only masked by whatever box was
+  set. Served AIP is now 5A80 (byte1 CV+TRM+SDA+CDCVM, byte2 EMV-mode).
 - AFL is now TWO entries: 08010101 (SFI 1 rec 1, claimed for ODA - the
   ordinary card-data record) + 10010100 (SFI 2 rec 1, NOT claimed - the
   key-chain record). The real card keeps these separate; the first build
   did not.
 - syntheticRecord()'s 9F4A is 82, not 95 (confirmed from the real card).
-- New keyChainRecord() (SFI 2 rec 1): 8F/9F32/92/90 (CA index, issuer PK
+- keyChainRecord() (SFI 2 rec 1): 8F/9F32/92/90 (CA index, issuer PK
   exponent/remainder/cert) + 93 (Signed Static Application Data). No ICC
   key tags (9F46/9F47/9F48) - those back DDA/CDA, not SDA, and SDA doesn't
-  need them. Every value is still FILLER - incrementing bytes, not real
-  key material.
+  need them. 8F is FA (the real card's own CA index, not an arbitrary
+  placeholder - an index missing from the terminal's CA store can make it
+  skip SDA/PKI entirely rather than attempt and fail it, a different,
+  less useful outcome than the one this cell wants). 90/92/93 are now the
+  real card's own lengths too (144/4/112 bytes) - a short cert or
+  signature fails as structurally malformed before the kernel ever checks
+  the key material, again not the outcome this cell wants. The bytes
+  inside 90/92/93 are still just incrementing filler, not real key
+  material.
 - aflContains() was fixed: it used to tolerate one appended field after
   the first AFL entry (a probe artifact already removed) but did so
   unconditionally, breaking on any genuine second entry. Now a plain
