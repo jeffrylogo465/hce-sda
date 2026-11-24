@@ -401,20 +401,24 @@ public class ShadowApduServicePpseTest {
      * disableDefaultProfileScript() here, unlike the synthetic-branch tests
      * above.
      *
-     * SDA IS NO LONGER CLAIMED. Claiming it (AIP_MC 5840) got a real kernel
-     * past the no-CAM stop above and, once 9F38 reached the FCI, into a
-     * PDOL-driven GPO - but every tap since (term-new9.log, term-new10.log)
-     * still stalled at the same place, GPO answered 9000 and no READ RECORD
-     * followed. Profiles.AIP_MC is back to 1800 (no ODA bit at all, byte 2
-     * clear) to isolate whether the unbacked SDA claim is itself what a
-     * later check now rejects, now that the PDOL round trip is not the
-     * blocker. clearOdaKeepSda()/setCdcvm() still run on top of that, so
-     * the served byte 1 is CV + TRM + CDCVM (0x1A), not the bare 0x18.
+     * SDA IS NOT CLAIMED, DDA AND CDA NOW ARE. The register run that
+     * reached GENERATE AC with AIP_MC at 1800 (no ODA bit at all) got a
+     * printed receipt: DECLINED, TVR byte 1 = 80 (ODA not performed,
+     * because this card claimed none). That closed the GPO-stall question
+     * (9F6B was the other variable isolated there) and opened this one - a
+     * terminal that forces online when ODA is not performed cannot approve
+     * a dummy-key offline tap regardless of what else is right. AIP_MC is
+     * now 3900 (CV + TRM + DDA + CDA, byte 2 still 0x00); setCdcvm() still
+     * runs on top, so the served byte 1 is CV + TRM + DDA + CDA + CDCVM
+     * (0x3B), not the bare 0x18. See Profiles.AIP_MC's own doc for the
+     * full history and why this is a probe (no real DDA/CDA key chain
+     * backs it yet) rather than a working ODA claim.
      *
-     * 94 (AFL) is the plain one-entry SFI-1-record-1 shape too -
-     * AFL_MC_PROBE_WITH_AID dropped its non-spec appended-AID-list tail for
-     * the same reason: no tap ever showed a kernel reading past the first
-     * 4 bytes, so the probe bought nothing and is gone.
+     * 94 (AFL)'s 4th byte - records involved in offline data authentication
+     * - is now 01, not 00: record 1 is claimed for ODA, matching the
+     * DDA/CDA bits above. The non-spec appended-AID-list tail stays
+     * dropped - no tap ever showed a kernel reading past the first 4
+     * bytes, so the probe bought nothing and stays gone.
      *
      * 9F6B stays OUT of this GPO. 7a74a93 added it, 0ad3dea dropped it when
      * byte 2 went to 0x40 ("MSD track 2 equivalent, has no business in an
@@ -445,18 +449,18 @@ public class ShadowApduServicePpseTest {
         byte[] aip = Emv.findTag(body, 0x82);
         int b1 = aip[0] & 0xFF;
         assertEquals("SDA bit (0x40) must not be claimed", 0, b1 & 0x40);
-        assertEquals("DDA bit (0x20) must stay clear", 0, b1 & 0x20);
-        assertEquals("CDA bit (0x01) must stay clear", 0, b1 & 0x01);
+        assertEquals("DDA bit (0x20) must now be claimed", 0x20, b1 & 0x20);
+        assertEquals("CDA bit (0x01) must now be claimed", 0x01, b1 & 0x01);
         assertEquals("CDCVM bit must be set", Emv.AIP_CDCVM, b1 & Emv.AIP_CDCVM);
-        assertEquals("0x1A - 0x18 survivors plus the CDCVM bit", 0x1A, b1);
+        assertEquals("0x3B - 0x39 (CV+TRM+DDA+CDA) plus the CDCVM bit", 0x3B, b1);
 
         int b2 = aip[1] & 0xFF;
         assertEquals("byte 2 must be exactly 0x00 - no mag-stripe, no EMV-mode claim",
                 0x00, b2);
 
         byte[] afl = Emv.findTag(body, 0x94);
-        assertEquals("AFL must be the plain one-entry shape, no appended AID tail",
-                "08010100", Hex.toHex(afl));
+        assertEquals("AFL must claim record 1 for offline data authentication now",
+                "08010101", Hex.toHex(afl));
     }
 
     /**

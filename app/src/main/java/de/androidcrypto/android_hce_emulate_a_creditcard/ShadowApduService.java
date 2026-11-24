@@ -1756,6 +1756,20 @@ public class ShadowApduService extends HostApduService {
      * the CDOL and CVM list in the editor finally reach the wire. A blank or
      * malformed box serves the constant. 8E is checked for shape by cvmBox(),
      * not by TlvValidator - a CVM list carries no tags.
+     *
+     * 8F/90/92/9F46/9F47/9F48/9F4A are the ODA key-chain group the register
+     * run's receipted DECLINE asked for (TVR byte 1 80, ODA not performed -
+     * see Profiles.AIP_MC's doc): CA public key index, issuer PK cert,
+     * issuer PK remainder, ICC PK cert, ICC PK exponent, ICC PK remainder,
+     * and the SDA tag list. EVERY VALUE HERE IS A PLACEHOLDER, not real key
+     * material - 8F names a CA index this app has no matching key for, and
+     * 90/92/9F46/9F48 are just incrementing filler bytes, long enough to be
+     * the right EMV shape (a cert/remainder-sized blob, a 3-byte 010001
+     * exponent) and nothing more. The acceptance bar for this cell is TVR
+     * byte 1 clearing on the next receipt - the terminal attempting ODA and
+     * failing on bad key material, not skipping ODA outright - not an
+     * approval. Working keys (CaKeySet/DumpChain/OdaVerifier already exist
+     * for the asset-card dump path) are the next cell, not this one.
      */
     private byte[] syntheticRecord() {
         String panS = pan();
@@ -1773,6 +1787,13 @@ public class ShadowApduService extends HostApduService {
                 h == null ? new byte[0] : tlv(0x5F20, h),
                 tlv(0x9F07, hex("FFC0")),
                 tlv(0x9F08, hex("0002")),
+                tlv(0x8F, hex("01")),
+                tlv(0x90, hex("000102030405060708090A0B0C0D0E0F1011121314151617")),
+                tlv(0x92, hex("18191A1B1C1D1E1F")),
+                tlv(0x9F46, hex("202122232425262728292A2B2C2D2E2F3031323334353637")),
+                tlv(0x9F47, hex("010001")),
+                tlv(0x9F48, hex("38393A3B3C3D3E3F")),
+                tlv(0x9F4A, hex("95")),
                 tlv(0x8C, hex(dol("cdol1", CDOL1))),
                 tlv(0x8D, hex(dol("cdol2", CDOL2))),
                 tlv(0x8E, hex(cvmBox())),
@@ -1847,14 +1868,21 @@ public class ShadowApduService extends HostApduService {
      * whatever AIP_MC holds, so the actually-served byte 1 is CV + TRM +
      * CDCVM (0x1A), not the bare 0x18.
      *
-     * 94: AFL_MC_PROBE_WITH_AID is now the plain, spec-valid one-entry AFL -
-     * 08 01 01 00, SFI 1, record 1 to 1, no offline-auth records - with the
-     * non-spec appended-AID-list tail (07 A0000000041010) dropped. That tail
-     * was the same malformed-input probe this method's name still carries:
-     * on the chance a kernel that stalled on the plain AFL read further into
-     * tag 94 than the first 4 bytes. No tap has shown any sign that was ever
+     * 94: AFL_MC_PROBE_WITH_AID is the plain, spec-valid one-entry AFL -
+     * 08 01 01, SFI 1, record 1 to 1 - with the non-spec appended-AID-list
+     * tail (07 A0000000041010) dropped. That tail was the same
+     * malformed-input probe this method's name still carries: on the
+     * chance a kernel that stalled on the plain AFL read further into tag
+     * 94 than the first 4 bytes. No tap has shown any sign that was ever
      * read; dropping it alongside the AIP revert narrows the GPO back to
      * exactly what a plain card would send.
+     *
+     * The 4th byte - number of records involved in offline data
+     * authentication - is now 01, not 00: record 1 (the only AFL entry) is
+     * claimed for ODA, matching the DDA/CDA bits AIP_MC now sets. A 00 here
+     * alongside an AIP that claims DDA/CDA would be internally inconsistent
+     * - the terminal would have nothing to read for the ODA it was just
+     * told to expect.
      *
      * 9F6B is NOT sent here: it is an MSD track 2 equivalent and this
      * profile is EMV mode only. It was briefly appended below (a stray
@@ -1866,13 +1894,19 @@ public class ShadowApduService extends HostApduService {
      * method - capturedAip()/findTag() on the actual bytes in the tap log
      * is the way to confirm what went out, not a visual "looks the same."
      */
-    private static final String AFL_MC_PROBE_WITH_AID = "08010100";
+    private static final String AFL_MC_PROBE_WITH_AID = "08010101";
 
     private byte[] mastercardGpoFromCard() {
         String boxed = hexBox("aip", "");
-        byte[] base = boxed.length() >= 4 ? hex(boxed) : Profiles.aipMc();
+        boolean isTypedBox = boxed.length() >= 4;
+        byte[] base = isTypedBox ? hex(boxed) : Profiles.aipMc();
         byte[] wrap = tlv(0x77, tlv(0x82, base));
-        Emv.clearOdaKeepSda(wrap);
+        // Only a typed/boxed AIP gets the strip: it is a captured or
+        // hand-typed claim this engine has no chain to back, same reasoning
+        // as clearOda()'s own doc. The default base (Profiles.aipMc()) is
+        // this app's own deliberate claim and is left alone - AIP_MC's own
+        // doc comment covers why DDA/CDA are set there now.
+        if (isTypedBox) Emv.clearOdaKeepSda(wrap);
         Emv.setCdcvm(wrap);
         byte[] aip = capturedAip(wrap);
 

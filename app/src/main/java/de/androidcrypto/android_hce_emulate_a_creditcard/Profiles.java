@@ -13,23 +13,39 @@ public final class Profiles {
 
     private static final String PPSE = "325041592E5359532E4444463031";
 
-    // Mastercard AIP 18 00. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
+    // Mastercard AIP 39 00. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
     // 0x08 TRM 0x04 issuer auth 0x02 on-device CVM 0x01 CDA.
-    // 0x18 = CV + TRM only - no ODA bit, no CDCVM. Byte 2 is 0x00: neither
-    // the mag-stripe bit nor the EMV-mode bit.
+    // 0x39 = CV + TRM + DDA + CDA - no SDA, no issuer auth, CDCVM comes from
+    // setCdcvm() on top. Byte 2 is 0x00: neither the mag-stripe bit nor the
+    // EMV-mode bit.
     //
-    // REVERTED FROM THE SDA-CLAIMING 5840 (term-new6.log / term-new9.log /
-    // term-new10.log): claiming SDA got a real Mastercard contactless
-    // kernel past its immediate "no CAM at all" stop and into a PDOL-driven
-    // GPO once 9F38 was added to the FCI (term-new10.log), but every tap
-    // since has still stalled at the same place - GPO answered 9000, no
-    // READ RECORD ever follows. This constant and AFL_MC_PROBE_WITH_AID's
-    // non-spec AID suffix (see that constant) are the two remaining
-    // deliberate deviations from a plain card on this path; going back to
-    // 1800 here isolates whether the claimed-but-unbacked SDA bit itself is
-    // what a later check in the kernel is now rejecting, now that the PDOL
-    // round trip is no longer the blocker.
-    private static final String AIP_MC = "1800";
+    // HISTORY: this was 1800 (no ODA bit at all) through the register tap
+    // that reached GENERATE AC and got a receipted DECLINE - full protocol
+    // completion, TVR byte 1 = 80 (ODA not performed, because this AIP
+    // claimed none). That tap closed the "stalls at GPO" question (9F6B
+    // was the other variable that register run isolated; see
+    // ShadowApduService.mastercardGpoFromCard()'s own doc) but opened this
+    // one: a terminal that forces online when ODA is not performed cannot
+    // approve a dummy-key offline TC here regardless of what else changes.
+    // Before that, it briefly claimed SDA alone (5840 - term-new6.log /
+    // term-new9.log / term-new10.log) to get a real kernel past an
+    // immediate no-CAM stop; that also stalled and was reverted.
+    //
+    // DDA + CDA are claimed now, SDA is not: this profile has no DDA/CDA key
+    // chain yet (CA index, issuer cert, ICC cert - see syntheticRecord()'s
+    // placeholder tags), so this is a probe, not a working ODA claim. The
+    // acceptance bar for this cell is TVR byte 1 clearing (ODA attempted)
+    // on the next receipt, even though a decline is still expected - real
+    // key material is the next cell, not this one.
+    //
+    // mastercardGpoFromCard() no longer runs clearOdaKeepSda() over this
+    // default base the way it still does over a typed "aip" box: that mask
+    // exists to strip DDA/IssuerAuth/CDA from a captured or hand-typed claim
+    // this engine has no chain to back, and it would undo the DDA/CDA bits
+    // set here if left unconditional. The boxed-AIP path (see
+    // scriptedMastercardGpo_honoursATypedAipBox) is unaffected - it still
+    // gets the strip.
+    private static final String AIP_MC = "3900";
 
     // Visa 58 00. b8 is mag-stripe, b7 is qVSDC. 0x58 = qVSDC + CV + TRM.
     //

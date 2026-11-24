@@ -60,11 +60,25 @@ public class ShadowApduServiceDispatchTest {
                 Hex.toHex(send("80A8000002830000")));
     }
 
+    /**
+     * Pins syntheticRecord()'s byte-exact shape, including the ODA
+     * placeholder key-chain group (8F/90/92/9F46/9F47/9F48/9F4A) added for
+     * the register run's next cell - see that method's own doc for why
+     * these are filler, not real key material.
+     */
     @Test
     public void readRecord_returnsRecordAnd9000() {
         assertEquals(
-                "70818D9F420208405F24033112015A0841111111111111115F3401019F0702FFC0"
-                        + "9F080200028C159F02069F03069F1A0295055F2A029A039C019F37048D18"
+                "7081E49F420208405F24033112015A0841111111111111115F3401019F0702FFC0"
+                        + "9F08020002"
+                        + "8F0101"
+                        + "9018000102030405060708090A0B0C0D0E0F1011121314151617"
+                        + "920818191A1B1C1D1E1F"
+                        + "9F4618202122232425262728292A2B2C2D2E2F3031323334353637"
+                        + "9F4703010001"
+                        + "9F480838393A3B3C3D3E3F"
+                        + "9F4A0195"
+                        + "8C159F02069F03069F1A0295055F2A029A039C019F37048D18"
                         + "9F02069F03069F1A0295055F2A029A039C019F37049F34038E0C"
                         + "00000000" + "00000000" + "5E071F039F0D0500000000009F0E0500000000009F0F05"
                         + "00000000005F28020840570C4111111111111111D31122019000",
