@@ -401,24 +401,32 @@ public class ShadowApduServicePpseTest {
      * disableDefaultProfileScript() here, unlike the synthetic-branch tests
      * above.
      *
-     * SDA IS NOT CLAIMED, DDA AND CDA NOW ARE. The register run that
+     * SDA IS CLAIMED NOW, DDA AND CDA ARE NOT. The register run that
      * reached GENERATE AC with AIP_MC at 1800 (no ODA bit at all) got a
      * printed receipt: DECLINED, TVR byte 1 = 80 (ODA not performed,
      * because this card claimed none). That closed the GPO-stall question
      * (9F6B was the other variable isolated there) and opened this one - a
      * terminal that forces online when ODA is not performed cannot approve
-     * a dummy-key offline tap regardless of what else is right. AIP_MC is
-     * now 3900 (CV + TRM + DDA + CDA, byte 2 still 0x00); setCdcvm() still
-     * runs on top, so the served byte 1 is CV + TRM + DDA + CDA + CDCVM
-     * (0x3B), not the bare 0x18. See Profiles.AIP_MC's own doc for the
-     * full history and why this is a probe (no real DDA/CDA key chain
-     * backs it yet) rather than a working ODA claim.
+     * a dummy-key offline tap regardless of what else is right. A real
+     * Mastercard M/Chip card dump (a QA reader app's own bundled
+     * test-card script, decompiled from its .NET assembly) showed SDA,
+     * not DDA/CDA, is the method a working card actually backs here -
+     * AIP_MC is now 5800 (CV + TRM + SDA, byte 2 still 0x00); setCdcvm()
+     * still runs on top, so the served byte 1 is CV + TRM + SDA + CDCVM
+     * (0x5A), not the bare 0x18. CDA is deliberately not claimed - it
+     * needs a live per-transaction signature (9F4B in GENERATE AC) this
+     * profile cannot produce. See Profiles.AIP_MC's own doc for the full
+     * history and why this is a probe (no real SDA key chain backs it
+     * yet) rather than a working ODA claim.
      *
-     * 94 (AFL)'s 4th byte - records involved in offline data authentication
-     * - is now 01, not 00: record 1 is claimed for ODA, matching the
-     * DDA/CDA bits above. The non-spec appended-AID-list tail stays
-     * dropped - no tap ever showed a kernel reading past the first 4
-     * bytes, so the probe bought nothing and stays gone.
+     * 94 (AFL) is now TWO entries: 08010101 (SFI 1 rec 1, claimed for
+     * offline data authentication, matching the SDA bit above) and
+     * 10010100 (SFI 2 rec 1, NOT claimed - keyChainRecord(), kept
+     * separate from the record the SDA signature actually covers, same
+     * split the real card dump uses). The non-spec appended-AID-list tail
+     * stays dropped - no tap ever showed a kernel reading past the first
+     * 4 bytes of a single entry, so that probe bought nothing and stays
+     * gone; this is a genuine second entry, not that tail reintroduced.
      *
      * 9F6B stays OUT of this GPO. 7a74a93 added it, 0ad3dea dropped it when
      * byte 2 went to 0x40 ("MSD track 2 equivalent, has no business in an
@@ -448,19 +456,20 @@ public class ShadowApduServicePpseTest {
 
         byte[] aip = Emv.findTag(body, 0x82);
         int b1 = aip[0] & 0xFF;
-        assertEquals("SDA bit (0x40) must not be claimed", 0, b1 & 0x40);
-        assertEquals("DDA bit (0x20) must now be claimed", 0x20, b1 & 0x20);
-        assertEquals("CDA bit (0x01) must now be claimed", 0x01, b1 & 0x01);
+        assertEquals("SDA bit (0x40) must now be claimed", 0x40, b1 & 0x40);
+        assertEquals("DDA bit (0x20) must stay clear", 0, b1 & 0x20);
+        assertEquals("CDA bit (0x01) must stay clear", 0, b1 & 0x01);
         assertEquals("CDCVM bit must be set", Emv.AIP_CDCVM, b1 & Emv.AIP_CDCVM);
-        assertEquals("0x3B - 0x39 (CV+TRM+DDA+CDA) plus the CDCVM bit", 0x3B, b1);
+        assertEquals("0x5A - 0x58 (CV+TRM+SDA) plus the CDCVM bit", 0x5A, b1);
 
         int b2 = aip[1] & 0xFF;
         assertEquals("byte 2 must be exactly 0x00 - no mag-stripe, no EMV-mode claim",
                 0x00, b2);
 
         byte[] afl = Emv.findTag(body, 0x94);
-        assertEquals("AFL must claim record 1 for offline data authentication now",
-                "08010101", Hex.toHex(afl));
+        assertEquals("AFL must be two entries now: SFI 1 rec 1 claimed for ODA, "
+                        + "SFI 2 rec 1 (the key-chain record) not",
+                "0801010110010100", Hex.toHex(afl));
     }
 
     /**

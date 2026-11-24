@@ -19,19 +19,50 @@ ReaderActivity's GEN AC #2 (P1 40) is CONFIRMED INERT on this path: a
 register terminal decides for itself whether to ask for a second GEN AC,
 and it never has. Do not chase it further.
 
-# Current cell: ODA probe
+# Current cell: ODA probe (SDA, revised against a real card dump)
 
-AIP_MC -> 3900 (DDA + CDA claimed, SDA still not). AFL 4th byte -> 01
-(record 1 claimed for ODA). syntheticRecord() gets a placeholder key-chain
-group: 8F (CA index), 90/92 (issuer PK cert/remainder), 9F46/9F47/9F48 (ICC
-PK cert/exponent/remainder), 9F4A (SDA tag list, 95). Every key-chain value
-is FILLER - incrementing bytes, not real key material. Build gate green
-(testDebugUnitTest + assembleDebug --rerun-tasks, all 40 tasks fresh).
-Installed nowhere yet - no tap has landed on this build.
+First pass claimed DDA + CDA with the key chain crammed into the same
+record the AFL flagged for ODA (9F4A = 95). Never tapped. Before tapping,
+decompiled a QA/test-tool APK pulled off the register phone
+(NovoTrack2.dll, ilspycmd) and read its bundled mastercard.json - a real
+captured Mastercard M/Chip card's own GPO/record bytes. That changed the
+design:
+
+- AIP_MC -> 5800 (SDA claimed, not DDA/CDA - CDA needs a live
+  per-transaction signature, 9F4B in GENERATE AC, this profile cannot
+  produce; SDA is the one method filler data can structurally approximate).
+  Served byte 1 is 0x5A (CV+TRM+SDA+CDCVM).
+- AFL is now TWO entries: 08010101 (SFI 1 rec 1, claimed for ODA - the
+  ordinary card-data record) + 10010100 (SFI 2 rec 1, NOT claimed - the
+  key-chain record). The real card keeps these separate; the first build
+  did not.
+- syntheticRecord()'s 9F4A is 82, not 95 (confirmed from the real card).
+- New keyChainRecord() (SFI 2 rec 1): 8F/9F32/92/90 (CA index, issuer PK
+  exponent/remainder/cert) + 93 (Signed Static Application Data). No ICC
+  key tags (9F46/9F47/9F48) - those back DDA/CDA, not SDA, and SDA doesn't
+  need them. Every value is still FILLER - incrementing bytes, not real
+  key material.
+- aflContains() was fixed: it used to tolerate one appended field after
+  the first AFL entry (a probe artifact already removed) but did so
+  unconditionally, breaking on any genuine second entry. Now a plain
+  multi-entry 4-byte walk, verified against the existing AssetCardEngine
+  multi-entry-AFL test (separate implementation, unaffected either way).
+
+Build gate green (testDebugUnitTest + assembleDebug --rerun-tasks, all 40
+tasks fresh). Installed nowhere yet - no tap has landed on this build.
 
 Acceptance for this cell: TVR byte 1 clears on the next receipt (ODA
 attempted, even failing on bad key material) - not an approval. A decline
 is still expected.
+
+Reference material pulled this session, kept outside the repo: the QA
+APK's assets/mastercard.json (real GPO/AIP/AFL/record bytes with working
+SDA+CDA, 9F4A=82, key chain split into non-ODA records) at
+~/qa-assets/assets/mastercard.json, and its decompiled source at
+~/qa-src/NovoTrack2.decompiled.cs. Worth re-reading before the next ODA
+cell (real keys) - it also has the GENERATE AC response shape (9F27/9F36/
+9F26/9F10) for a working SDA card, not yet compared against this
+project's own.
 
 # Next task
 

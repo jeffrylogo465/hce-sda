@@ -61,28 +61,40 @@ public class ShadowApduServiceDispatchTest {
     }
 
     /**
-     * Pins syntheticRecord()'s byte-exact shape, including the ODA
-     * placeholder key-chain group (8F/90/92/9F46/9F47/9F48/9F4A) added for
-     * the register run's next cell - see that method's own doc for why
-     * these are filler, not real key material.
+     * Pins syntheticRecord()'s byte-exact shape, including 9F4A=82 (the
+     * SDA tag list, matching a real Mastercard M/Chip card dump) added for
+     * the register run's ODA-probe cell - see that method's own doc for
+     * why 82, and why the key-chain group moved to keyChainRecord()
+     * instead of living here.
      */
     @Test
     public void readRecord_returnsRecordAnd9000() {
         assertEquals(
-                "7081E49F420208405F24033112015A0841111111111111115F3401019F0702FFC0"
+                "7081919F420208405F24033112015A0841111111111111115F3401019F0702FFC0"
                         + "9F08020002"
-                        + "8F0101"
-                        + "9018000102030405060708090A0B0C0D0E0F1011121314151617"
-                        + "920818191A1B1C1D1E1F"
-                        + "9F4618202122232425262728292A2B2C2D2E2F3031323334353637"
-                        + "9F4703010001"
-                        + "9F480838393A3B3C3D3E3F"
-                        + "9F4A0195"
+                        + "9F4A0182"
                         + "8C159F02069F03069F1A0295055F2A029A039C019F37048D18"
                         + "9F02069F03069F1A0295055F2A029A039C019F37049F34038E0C"
                         + "00000000" + "00000000" + "5E071F039F0D0500000000009F0E0500000000009F0F05"
                         + "00000000005F28020840570C4111111111111111D31122019000",
                 Hex.toHex(send("00B2010C00")));
+    }
+
+    /**
+     * Pins keyChainRecord()'s byte-exact shape (SFI 2 rec 1) - the
+     * placeholder issuer-key/SDA-signature group the register run's
+     * ODA-probe cell keeps separate from syntheticRecord(), matching the
+     * real card dump's own split. Sent directly, same as the SFI 1 test
+     * above: readRecord() has no AFL gate of its own, that gate lives
+     * earlier in dispatch and only applies once a GPO has run.
+     */
+    @Test
+    public void readRecord_sfi2_returnsKeyChainRecordAnd9000() {
+        assertEquals(
+                "70358F01019F320103920818191A1B1C1D1E1F"
+                        + "9018000102030405060708090A0B0C0D0E0F101112131415161793084041424344454647"
+                        + "9000",
+                Hex.toHex(send("00B2011400")));
     }
 
     /** Terminal-side CVM rule walk for the amount conditions 06/07, plus the unconditional 03 fallback. */

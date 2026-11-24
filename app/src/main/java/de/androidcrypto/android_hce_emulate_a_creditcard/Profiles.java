@@ -13,11 +13,11 @@ public final class Profiles {
 
     private static final String PPSE = "325041592E5359532E4444463031";
 
-    // Mastercard AIP 39 00. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
+    // Mastercard AIP 58 00. Byte 1: 0x80 RFU 0x40 SDA 0x20 DDA 0x10 CV
     // 0x08 TRM 0x04 issuer auth 0x02 on-device CVM 0x01 CDA.
-    // 0x39 = CV + TRM + DDA + CDA - no SDA, no issuer auth, CDCVM comes from
-    // setCdcvm() on top. Byte 2 is 0x00: neither the mag-stripe bit nor the
-    // EMV-mode bit.
+    // 0x58 = CV + TRM + SDA - no DDA, no CDA, no issuer auth, CDCVM comes
+    // from setCdcvm() on top. Byte 2 is 0x00: neither the mag-stripe bit
+    // nor the EMV-mode bit.
     //
     // HISTORY: this was 1800 (no ODA bit at all) through the register tap
     // that reached GENERATE AC and got a receipted DECLINE - full protocol
@@ -31,21 +31,37 @@ public final class Profiles {
     // term-new9.log / term-new10.log) to get a real kernel past an
     // immediate no-CAM stop; that also stalled and was reverted.
     //
-    // DDA + CDA are claimed now, SDA is not: this profile has no DDA/CDA key
-    // chain yet (CA index, issuer cert, ICC cert - see syntheticRecord()'s
-    // placeholder tags), so this is a probe, not a working ODA claim. The
-    // acceptance bar for this cell is TVR byte 1 clearing (ODA attempted)
-    // on the next receipt, even though a decline is still expected - real
-    // key material is the next cell, not this one.
+    // It briefly claimed DDA + CDA instead of SDA. A real Mastercard M/Chip
+    // card dump (a QA reader app's own bundled test-card script, decompiled
+    // from its .NET assembly) showed the actual shape a working card uses:
+    // AIP 5980 (SDA AND CDA both claimed, plus mag-stripe support), 9F4A
+    // (SDA tag list) = 82, key material (CA index/issuer cert/issuer
+    // remainder) in a record the AFL does NOT flag for offline data
+    // authentication, and the SDA signature itself (tag 93, Signed Static
+    // Application Data) as its own static record - none of which this
+    // profile had. CDA is dropped from that picture on purpose: it needs a
+    // live per-transaction signature (9F4B in the GENERATE AC response)
+    // this profile cannot produce without a real ICC private key, and
+    // claiming it with nothing to back it is a protocol inconsistency a
+    // kernel may flag as something other than the plain "ODA attempted and
+    // failed" this cell is trying to isolate. SDA is the one method this
+    // profile can structurally approximate with placeholder-filled static
+    // data and no live signing math - see ShadowApduService.keyChainRecord()
+    // and syntheticRecord()'s 9F4A.
     //
-    // mastercardGpoFromCard() no longer runs clearOdaKeepSda() over this
+    // EVERYTHING THIS CLAIMS IS STILL UNBACKED: no real CA/issuer key chain
+    // exists, so SDA will still fail verification - the acceptance bar for
+    // this cell is TVR byte 1 clearing (ODA attempted) on the next receipt,
+    // not an approval. Real key material is the next cell, not this one.
+    //
+    // mastercardGpoFromCard() does not run clearOdaKeepSda() over this
     // default base the way it still does over a typed "aip" box: that mask
     // exists to strip DDA/IssuerAuth/CDA from a captured or hand-typed claim
-    // this engine has no chain to back, and it would undo the DDA/CDA bits
-    // set here if left unconditional. The boxed-AIP path (see
+    // this engine has no chain to back, and SDA alone has nothing in that
+    // mask to strip anyway. The boxed-AIP path (see
     // scriptedMastercardGpo_honoursATypedAipBox) is unaffected - it still
     // gets the strip.
-    private static final String AIP_MC = "3900";
+    private static final String AIP_MC = "5800";
 
     // Visa 58 00. b8 is mag-stripe, b7 is qVSDC. 0x58 = qVSDC + CV + TRM.
     //

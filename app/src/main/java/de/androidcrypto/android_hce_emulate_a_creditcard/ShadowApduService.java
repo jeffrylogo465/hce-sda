@@ -1015,16 +1015,24 @@ public class ShadowApduService extends HostApduService {
     /**
      * True when the AFL names this SFI and record.
      *
-     * Each entry starts with the standard 4 bytes (SFI/start/end/ODA count).
-     * This also tolerates one appended length-prefixed field after an entry
-     * - a single length byte plus that many bytes, e.g. mastercardGpoFromCard()'s
-     * experimental AFL that appends an AID after the SFI 1/rec 1 entry
-     * (08 01 01 01 07 A0000000041010). That trailing AID is NOT a second EMV
-     * AFL entry - a real kernel's own 4-byte walk would misread it as one (07
-     * A0 00 00 as SFI 0 records 0xA0-0x00, then 00 41 01 0 left over, 13 bytes
-     * not a multiple of 4). This walk only has to not trip over those bytes
-     * itself while checking entry 1; it does not make the appended AID a
-     * second real entry.
+     * Standard EMV AFL: a flat sequence of 4-byte entries (SFI/flag, start
+     * record, end record, records for offline data authentication). Walks
+     * every complete 4-byte entry; a short leftover tail (not a multiple of
+     * 4) is ignored rather than misread as a partial entry.
+     *
+     * FIX: this used to tolerate one appended length-prefixed field right
+     * after the FIRST entry only, for mastercardGpoFromCard()'s old
+     * non-spec malformed-input probe (08 01 01 01 07 A0000000041010 - an
+     * appended AID after the SFI 1/rec 1 entry, nothing else in the AFL).
+     * That tolerance was unconditional - it treated the byte right after
+     * EVERY entry as a length field to skip, not just the one it was built
+     * for - so it broke on any AFL with a genuine second entry, misreading
+     * that entry's own leading byte as a length and running off the end.
+     * The probe's tail is gone (see AFL_MC_PROBE_WITH_AID's own doc) and
+     * nothing else in this class ever produced that shape, so the
+     * tolerance is gone with it. mastercardGpoFromCard()'s SDA probe needs
+     * a genuine second entry (the ODA record, plus a non-ODA entry for the
+     * key-chain record) to resolve correctly, which only a plain walk does.
      */
     private static boolean aflContains(byte[] afl, int sfi, int rec) {
         int i = 0;
@@ -1034,10 +1042,6 @@ public class ShadowApduService extends HostApduService {
                 return true;
             }
             i += 4;
-            if (i < afl.length) {
-                int len = afl[i] & 0xFF;
-                i += 1 + len;
-            }
         }
         return false;
     }
@@ -1757,19 +1761,17 @@ public class ShadowApduService extends HostApduService {
      * malformed box serves the constant. 8E is checked for shape by cvmBox(),
      * not by TlvValidator - a CVM list carries no tags.
      *
-     * 8F/90/92/9F46/9F47/9F48/9F4A are the ODA key-chain group the register
-     * run's receipted DECLINE asked for (TVR byte 1 80, ODA not performed -
-     * see Profiles.AIP_MC's doc): CA public key index, issuer PK cert,
-     * issuer PK remainder, ICC PK cert, ICC PK exponent, ICC PK remainder,
-     * and the SDA tag list. EVERY VALUE HERE IS A PLACEHOLDER, not real key
-     * material - 8F names a CA index this app has no matching key for, and
-     * 90/92/9F46/9F48 are just incrementing filler bytes, long enough to be
-     * the right EMV shape (a cert/remainder-sized blob, a 3-byte 010001
-     * exponent) and nothing more. The acceptance bar for this cell is TVR
-     * byte 1 clearing on the next receipt - the terminal attempting ODA and
-     * failing on bad key material, not skipping ODA outright - not an
-     * approval. Working keys (CaKeySet/DumpChain/OdaVerifier already exist
-     * for the asset-card dump path) are the next cell, not this one.
+     * 9F4A (the SDA tag list) is 82: a real Mastercard M/Chip card dump (a
+     * QA reader app's own bundled test-card script, decompiled from its
+     * .NET assembly) carries exactly this value in the record its own AFL
+     * flags for offline data authentication - tag 82 (the AIP) is the only
+     * tag beyond this record's own data that the SDA signature covers.
+     * This record IS that ODA-flagged record (see mastercardGpoFromCard()'s
+     * AFL, entry 1); the key material that would verify the signature - CA
+     * index, issuer cert, the signature itself - is deliberately NOT here.
+     * The same real dump keeps that group in a separate record its AFL
+     * does NOT flag for ODA - see keyChainRecord() below, and
+     * mastercardGpoFromCard()'s AFL entry 2.
      */
     private byte[] syntheticRecord() {
         String panS = pan();
@@ -1787,13 +1789,7 @@ public class ShadowApduService extends HostApduService {
                 h == null ? new byte[0] : tlv(0x5F20, h),
                 tlv(0x9F07, hex("FFC0")),
                 tlv(0x9F08, hex("0002")),
-                tlv(0x8F, hex("01")),
-                tlv(0x90, hex("000102030405060708090A0B0C0D0E0F1011121314151617")),
-                tlv(0x92, hex("18191A1B1C1D1E1F")),
-                tlv(0x9F46, hex("202122232425262728292A2B2C2D2E2F3031323334353637")),
-                tlv(0x9F47, hex("010001")),
-                tlv(0x9F48, hex("38393A3B3C3D3E3F")),
-                tlv(0x9F4A, hex("95")),
+                tlv(0x9F4A, hex("82")),
                 tlv(0x8C, hex(dol("cdol1", CDOL1))),
                 tlv(0x8D, hex(dol("cdol2", CDOL2))),
                 tlv(0x8E, hex(cvmBox())),
@@ -1802,6 +1798,44 @@ public class ShadowApduService extends HostApduService {
                 tlv(0x9F0F, hex("0000000000")),
                 tlv(0x5F28, hex("0840")),
                 tlv(0x57, track2())));
+    }
+
+    /**
+     * The SFI 2 / record 1 key-chain placeholder, read by mastercardGpoFromCard()'s
+     * second AFL entry (NOT claimed for offline data authentication).
+     *
+     * CA public key index (8F), issuer PK exponent (9F32), issuer PK
+     * remainder (92), issuer PK certificate (90), and the SDA signature
+     * itself - Signed Static Application Data (93). This grouping and the
+     * 93/9F4A split come straight from the real Mastercard M/Chip dump
+     * syntheticRecord()'s own doc cites: that card's SDA-flagged record
+     * holds only ordinary card data plus 9F4A, while the key chain and the
+     * signature sit in separate records its AFL does not flag for ODA.
+     *
+     * NO ICC KEY TAGS (9F46/9F47/9F48) HERE ON PURPOSE: those back DDA/CDA,
+     * which need a live per-transaction signature (9F4B in GENERATE AC)
+     * this profile cannot produce - see Profiles.AIP_MC's doc for why this
+     * cell claims SDA only. SDA verifies a static signature against a
+     * static issuer key chain, nothing dynamic, so this record carries
+     * only the issuer side of the chain.
+     *
+     * EVERY VALUE HERE IS A PLACEHOLDER, not real key material - 8F names
+     * a CA index this app has no matching key for, and 92/90/93 are just
+     * incrementing filler bytes, long enough to be the right EMV shape (a
+     * remainder, a cert-sized blob, a signature-sized blob) and nothing
+     * more. The acceptance bar for this cell is TVR byte 1 clearing on the
+     * next receipt - the terminal attempting ODA and failing on bad key
+     * material, not skipping ODA outright - not an approval. Working keys
+     * (CaKeySet/DumpChain/OdaVerifier already exist for the asset-card
+     * dump path) are the next cell, not this one.
+     */
+    private byte[] keyChainRecord() {
+        return tlv(0x70, cat(
+                tlv(0x8F, hex("01")),
+                tlv(0x9F32, hex("03")),
+                tlv(0x92, hex("18191A1B1C1D1E1F")),
+                tlv(0x90, hex("000102030405060708090A0B0C0D0E0F1011121314151617")),
+                tlv(0x93, hex("4041424344454647"))));
     }
 
     /**
@@ -1856,33 +1890,26 @@ public class ShadowApduService extends HostApduService {
      * leaves SDA alone, because this AIP is this app's own deliberate claim
      * (typed or built-in), not a captured one.
      *
-     * AIP_MC ITSELF IS BACK TO 1800 (see that constant's own doc) - no ODA
-     * bit claimed at all, byte 2 all clear. Claiming SDA (5840, the
-     * intermediate value term-new6.log through term-new10.log ran with) got
-     * a real Mastercard kernel past the immediate no-CAM stop and, once
-     * 9F38 reached the FCI, into a PDOL-driven GPO - but every tap since
-     * still stalled at the same point, GPO answered 9000 and no READ RECORD
-     * followed. Reverting the AIP claim isolates whether the unbacked SDA
-     * bit is itself the new rejection once the PDOL round trip stopped
-     * being the blocker. clearOdaKeepSda()/setCdcvm() still run on top of
-     * whatever AIP_MC holds, so the actually-served byte 1 is CV + TRM +
-     * CDCVM (0x1A), not the bare 0x18.
+     * AIP_MC's own doc has the full history - 1800 (no ODA, the register
+     * run that reached GENERATE AC and got a receipted DECLINE, TVR byte 1
+     * 80), then briefly DDA+CDA, now SDA (5800) - a real Mastercard M/Chip
+     * card dump's own shape, minus the CDA claim this profile cannot back
+     * with a live signature. clearOdaKeepSda()/setCdcvm() do not run over
+     * this default base (see AIP_MC's doc for why), so the actually-served
+     * byte 1 is CV + TRM + SDA + CDCVM (0x5A), not the bare 0x18.
      *
-     * 94: AFL_MC_PROBE_WITH_AID is the plain, spec-valid one-entry AFL -
-     * 08 01 01, SFI 1, record 1 to 1 - with the non-spec appended-AID-list
-     * tail (07 A0000000041010) dropped. That tail was the same
-     * malformed-input probe this method's name still carries: on the
-     * chance a kernel that stalled on the plain AFL read further into tag
-     * 94 than the first 4 bytes. No tap has shown any sign that was ever
-     * read; dropping it alongside the AIP revert narrows the GPO back to
-     * exactly what a plain card would send.
-     *
-     * The 4th byte - number of records involved in offline data
-     * authentication - is now 01, not 00: record 1 (the only AFL entry) is
-     * claimed for ODA, matching the DDA/CDA bits AIP_MC now sets. A 00 here
-     * alongside an AIP that claims DDA/CDA would be internally inconsistent
-     * - the terminal would have nothing to read for the ODA it was just
-     * told to expect.
+     * 94: AFL_MC_PROBE_WITH_AID is now TWO entries, not one - 08 01 01 01
+     * (SFI 1 rec 1, claimed for offline data authentication - the ordinary
+     * card-data record, matching the DDA/CDA-then-SDA bit AIP_MC sets) and
+     * 10 01 01 00 (SFI 2 rec 1, NOT claimed for ODA - keyChainRecord(),
+     * the CA index/issuer cert/SDA-signature group a real card keeps
+     * separate from the record the signature actually covers). The
+     * non-spec appended-AID-list tail (07 A0000000041010) this method's
+     * name still carries is still dropped - no tap ever showed a kernel
+     * reading past the first 4 bytes of a single entry, so the probe
+     * bought nothing and stays gone; this second entry is a genuine
+     * second AFL entry, not that tail reintroduced. aflContains() was
+     * fixed to walk a real multi-entry AFL correctly - see its own doc.
      *
      * 9F6B is NOT sent here: it is an MSD track 2 equivalent and this
      * profile is EMV mode only. It was briefly appended below (a stray
@@ -1894,7 +1921,7 @@ public class ShadowApduService extends HostApduService {
      * method - capturedAip()/findTag() on the actual bytes in the tap log
      * is the way to confirm what went out, not a visual "looks the same."
      */
-    private static final String AFL_MC_PROBE_WITH_AID = "08010101";
+    private static final String AFL_MC_PROBE_WITH_AID = "0801010110010100";
 
     private byte[] mastercardGpoFromCard() {
         String boxed = hexBox("aip", "");
@@ -1905,7 +1932,7 @@ public class ShadowApduService extends HostApduService {
         // hand-typed claim this engine has no chain to back, same reasoning
         // as clearOda()'s own doc. The default base (Profiles.aipMc()) is
         // this app's own deliberate claim and is left alone - AIP_MC's own
-        // doc comment covers why DDA/CDA are set there now.
+        // doc comment covers why SDA is set there now.
         if (isTypedBox) Emv.clearOdaKeepSda(wrap);
         Emv.setCdcvm(wrap);
         byte[] aip = capturedAip(wrap);
@@ -2957,6 +2984,11 @@ public class ShadowApduService extends HostApduService {
         if (sfi == 1) {
             tap("-- rec sfi=1 rec=" + rec + " (synthetic)");
             return cat(syntheticRecord(), SW_OK);
+        }
+
+        if (sfi == 2) {
+            tap("-- rec sfi=2 rec=" + rec + " (key chain placeholder, unbacked)");
+            return cat(keyChainRecord(), SW_OK);
         }
 
         tap("-- rec miss sfi=" + sfi + " rec=" + rec);
