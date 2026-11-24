@@ -222,4 +222,44 @@ public class ProfileTlvTest {
         String body = body(p.selectApp("A00000002501", "HELLO")[0]);
         assertEquals(ShadowApduService.CDOL1, tagValue1(body, "9F38"));
     }
+
+    /**
+     * FIX: ProfileMastercard.selectApp()'s main entry used to ignore the
+     * `aid` parameter entirely - the SELECT-match prefix and the FCI's own
+     * 84 were both hardcoded to the literal A0000000041010, so a per-card
+     * "aid" box (aidFor(), defaulting to defaultAid() when empty or not
+     * matching this RID) could never actually be selected for this
+     * profile; only the label flowed through. Now mirrors
+     * ProfileVisa.selectApp()'s own pattern: the AID comes from the
+     * parameter, and the Lc is computed from its length, not a literal 07
+     * - a 9-byte AID under this RID (A0000000049999...) would read a
+     * trailing byte as Le with a hardcoded 07, same bug ProfileVisa's own
+     * doc already names for that profile.
+     *
+     * The Maestro co-entry is unaffected - it is a fixed second app this
+     * profile always carries, not the "aid" box's own AID.
+     */
+    @Test
+    public void selectApp_mastercard_honoursACustomAid_notTheHardcodedLiteral() {
+        CardProfile p = new ProfileMastercard();
+        String custom = "A00000000499990011";
+
+        String[] lines = p.selectApp(custom, "HELLO");
+        assertTrue("SELECT-match prefix must follow the custom AID's own length (09), "
+                        + "not a hardcoded Lc of 07: " + lines[0],
+                lines[0].startsWith("00A4040009" + custom + "="));
+
+        String body1 = body(lines[0]);
+        assertEquals("FCI's 84 must be the custom AID, not A0000000041010",
+                custom, tagValue1(body1, "84"));
+
+        assertTrue("Maestro co-entry must still be its own fixed AID, unaffected by the box",
+                lines[1].startsWith("00A4040007A0000000043060="));
+
+        // aidFor() can hand back an empty string when the box is blank -
+        // same contract ProfileVisa.selectApp()'s own doc states.
+        String[] fallback = p.selectApp("", "HELLO");
+        assertTrue("an empty aid must fall back to defaultAid()",
+                fallback[0].startsWith("00A4040007A0000000041010="));
+    }
 }

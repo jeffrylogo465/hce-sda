@@ -512,4 +512,108 @@ public class ShadowApduServicePpseTest {
         int b2 = aip[1] & 0xFF;
         assertEquals("byte 2 comes from the box too, unmasked", 0x00, b2);
     }
+
+    // ---- MSD path, built properly instead of masking the EMV script line ----
+
+    private void setMsd(boolean on) {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_msd", on ? "1" : "0").commit();
+    }
+
+    private void setTrack2Box(String raw) {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_track2", raw).commit();
+    }
+
+    /**
+     * mastercardMsdGpo(): format 1 - 80 { AIP 58 40, 9F6B track } - no AFL,
+     * no inner 77/82/94 wrapper, no READ RECORD needed. This replaces
+     * msdAip()'s generic bit-masking of the canned EMV-mode script line for
+     * Mastercard specifically (see the dispatch site's own doc): that line
+     * is the 77/82/94 template, and masking its AIP bits left the AFL and
+     * everything else EMV-shaped in place - neither a real MSD payload nor
+     * a coherent EMV one.
+     *
+     * The track2 box here (21 significant hex digits after the PAN/D/expiry
+     * shape) is short on purpose, to also exercise the pad-to-37 case in
+     * the same byte-exact assertion - track2RawForMsdGpo_padsShortLong...()
+     * below isolates the boundary cases on their own.
+     */
+    @Test
+    public void mastercardMsdGpo_isFormat1AipPlus9F6B_byteExact() {
+        setProfile("MASTERCARD");
+        setMsd(true);
+        setTrack2Box("4111111111111111D2912");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        String gpo = send("80A8000002830000");
+        assertEquals("801858409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9000", gpo);
+    }
+
+    /**
+     * track2RawForMsdGpo(): the box's raw digits, padded with trailing F's
+     * to exactly 37 characters when short, truncated to the first 37 when
+     * long, left alone at exactly 37 - then Hex.hexLenient()'s own
+     * odd-length pad (one more trailing F) always makes the final 9F6B
+     * value 38 hex characters, 19 bytes, matching Mastercard's fixed MSD
+     * track-2 field length. All three boundaries land on the same 19-byte
+     * shape; only the long case's content differs after truncation.
+     */
+    @Test
+    public void track2RawForMsdGpo_padsOrTruncatesToExactly37Chars() {
+        setProfile("MASTERCARD");
+        setMsd(true);
+
+        setTrack2Box("4111111111111111D2912");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        assertEquals("short box: padded with F's to 37, then hexLenient's own trailing F",
+                "801858409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9000",
+                send("80A8000002830000"));
+
+        setTrack2Box("4111111111111111D29122011123456789012345");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        assertEquals("long box: truncated to the first 37 chars, then hexLenient's trailing F",
+                "801858409F6B134111111111111111D29122011123456789012F9000",
+                send("80A8000002830000"));
+
+        setTrack2Box("0123456789012345678901234567890123456");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        assertEquals("exactly-37 box: untouched at that stage, then hexLenient's trailing F",
+                "801858409F6B130123456789012345678901234567890123456F9000",
+                send("80A8000002830000"));
+    }
+
+    /**
+     * MSD=0 (the default) must still reach mastercardGpoFromCard()'s own
+     * 77/82/94 EMV template, untouched by the new mastercardShape-detection
+     * branch above it in dispatch - the restructuring that added the MSD
+     * branch must not have changed which branch a non-MSD tap takes.
+     */
+    @Test
+    public void mastercardGpo_msdFalse_stillYieldsThe77Template() {
+        setProfile("MASTERCARD");
+        setMsd(false);
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        String gpo = send("80A8000002830000");
+        assertTrue("GPO must not refuse: " + gpo, gpo.endsWith("9000"));
+        assertTrue("MSD=0 must still be the 77-wrapped EMV template, not format 1",
+                gpo.startsWith("77"));
+
+        byte[] body = Hex.hex(gpo.substring(0, gpo.length() - 4));
+        assertNotNull("82 (AIP) missing - this is mastercardGpoFromCard()'s own template",
+                Emv.findTag(body, 0x82));
+        assertNotNull("94 (AFL) missing - MSD=0 must not drop to the AFL-less MSD shape",
+                Emv.findTag(body, 0x94));
+    }
 }

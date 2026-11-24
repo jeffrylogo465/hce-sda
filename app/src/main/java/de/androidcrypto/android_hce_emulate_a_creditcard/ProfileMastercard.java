@@ -93,14 +93,30 @@ public final class ProfileMastercard implements CardProfile {
     /**
      * F03: the FCI is now built from each entry's own AID and the label
      * argument (Profiles.selectedFci: 84 = the AID, 50 = the label),
-     * instead of baked verbatim into FCI/MAESTRO_FCI. `aid` is still
-     * unused - it never told the two lines apart (each is keyed on its own
-     * literal SELECT prefix) - only `label` now flows through, into both.
+     * instead of baked verbatim into FCI/MAESTRO_FCI.
+     *
+     * FIX: the main entry's SELECT-match prefix and FCI both now follow
+     * `aid` (aidFor()'s per-card box, defaulting to defaultAid() when the
+     * box is empty or does not match this profile's RID - see that
+     * method's own doc), the same pattern ProfileVisa.selectApp() already
+     * uses. `aid` used to be ignored entirely here - both the match prefix
+     * and the FCI were hardcoded to the literal A0000000041010 regardless
+     * of what the box held, so a typed custom AID could never actually be
+     * selected for this profile; only `label` flowed through. The Lc is
+     * computed from the AID's own length, not a literal 07, for the same
+     * reason ProfileVisa's own doc gives: a longer AID under this RID
+     * would read a trailing byte as Le.
+     *
+     * The Maestro co-entry is a fixed second app this profile always
+     * carries, not something the single "aid" box represents - its AID
+     * stays the AID_MAESTRO literal.
      */
     @Override public String[] selectApp(String aid, String label) {
+        String a = (aid == null || aid.isEmpty()) ? defaultAid() : aid;
+        byte[] name = Hex.hex(a);
         return new String[]{
-                "00A4040007A0000000041010=" + Profiles.hex(Profiles.selectedFci(
-                        defaultAid(), label, null)) + "9000",
+                "00A40400" + String.format(Locale.US, "%02X", name.length) + a
+                        + "=" + Profiles.hex(Profiles.selectedFci(a, label, null)) + "9000",
                 "00A4040007A0000000043060=" + Profiles.hex(Profiles.selectedFci(
                         AID_MAESTRO, label, null)) + "9000",
         };

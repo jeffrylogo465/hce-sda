@@ -102,6 +102,24 @@ public class ApduServiceAidCoverageTest {
         }
     }
 
+    /**
+     * 1PAY.SYS.DDF01, the legacy/mag-stripe-era directory name, must have
+     * its own filter alongside 2PAY - some MSD-only or dual-interface
+     * terminals probe it first, and ShadowApduService.selectInner()/
+     * trackState() now answer it the same way as 2PAY (see
+     * ShadowApduService.PPSE_1PAY's own doc). A routed-but-unhandled name
+     * is worse than an unrouted one, so this is paired with that code
+     * change, not a standalone manifest edit.
+     */
+    @Test
+    public void aidGroup_includes1PayAlongside2Pay() throws IOException {
+        String xml = readAll(APDUSERVICE_XML).toUpperCase();
+        assertTrue("1PAY.SYS.DDF01 filter missing",
+                xml.contains("ANDROID:NAME=\"315041592E5359532E4444463031\""));
+        assertTrue("2PAY.SYS.DDF01 filter missing",
+                xml.contains("ANDROID:NAME=\"325041592E5359532E4444463031\""));
+    }
+
     @Test
     public void aidGroup_categoryIsPayment() throws IOException {
         String xml = readAll(APDUSERVICE_XML);

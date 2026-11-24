@@ -29,6 +29,12 @@
 
         <aid-filter android:name="325041592E5359532E4444463031" />
 
+        <!-- 1PAY.SYS.DDF01 - the legacy/mag-stripe-era directory name, same
+             application-selection directory as 2PAY above. Some MSD-only or
+             dual-interface terminals probe this name first; selectInner()
+             answers the same buildPpse() directory for either. -->
+        <aid-filter android:name="315041592E5359532E4444463031" />
+
         <!-- mrautio/emv-card-simulator test card, answered by AssetCardEngine
              when the key-tools toggle is on. Full AID, as rule 1 asks. -->
         <aid-filter android:name="AFFFFFFFFF1234" />

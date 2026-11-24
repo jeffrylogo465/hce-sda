@@ -77,12 +77,66 @@ cell (real keys) - it also has the GENERATE AC response shape (9F27/9F36/
 9F26/9F10) for a working SDA card, not yet compared against this
 project's own.
 
-# Next task
+# Side quest: MSD path built properly (at home, no terminal available)
 
-Install this build, repeat the go/no-go (pidof, dumpsys nfc preferred
-service + routing), tap once at the same amount as the last comparable
-run if the register allows it, pull the receipt. Report TVR byte 1 and the
-verdict.
+Not part of the ODA cell, AIP_MC/the ODA cell untouched (verified: zero
+diff in Profiles.java). Separate, independent work while away from the
+register:
+
+- mastercardMsdGpo() (new): Mastercard's own dedicated MSD GPO - format 1,
+  80 { AIP 5840, 9F6B track }, no AFL, no READ RECORD. Wired into the
+  ins==0xA8 script-override dispatch ahead of the generic isMsd()->msdAip()
+  branch, which only masked AIP bits on Mastercard's EMV-mode 77/82/94
+  script line and produced neither a coherent MSD nor EMV payload.
+- track2RawForMsdGpo() (new): the "track2" box's raw digits verbatim (no
+  PAN/expiry synthesis fallback), padded with trailing F's to exactly 37
+  characters (or truncated to the first 37 if longer), then
+  Hex.hexLenient()'s own odd-length pad makes it 38 chars/19 bytes -
+  Mastercard's fixed MSD track-2 field length.
+- AIP_MC_MSD = "5840" - a separate constant, not AIP_MC's byte 1 plus a
+  computed byte 2. Decoupled from AIP_MC on purpose.
+- MSD=0 path is byte-for-byte untouched - verified by an explicit test,
+  not just by inspection.
+- ProfileMastercard.selectApp(): fixed to honour the `aid` parameter
+  (aidFor()'s per-card box, defaulting to defaultAid()="A0000000041010")
+  instead of a hardcoded literal - it was already documented as a known
+  gap ("aid is still unused") before this. Lc is now computed from the
+  AID's own length, mirroring ProfileVisa.selectApp()'s existing pattern.
+  The Maestro co-entry stays a fixed literal - it is not the "aid" box's
+  own AID.
+- apduservice.xml: added 1PAY.SYS.DDF01 alongside 2PAY (the other four
+  AIDs the register-run notes asked for - A0000000031010, A00000002501,
+  A0000000651010, A0000000043060 - were already filtered). Also wired
+  selectInner()/trackState()/the PPSE-seen diagnostic to answer/recognise
+  1PAY the same as 2PAY - a routed-but-unrecognised name would have been
+  worse than an unrouted one.
+- Two unrelated bugs fixed while in these files, as asked: apdu[1] was
+  read outside processCommandApdu()'s own try, unguarded against a
+  non-null apdu shorter than 2 bytes (a crash, not just a bad log line -
+  fixed with a length guard, log kept outside the try on purpose); INS
+  0x88 (INTERNAL AUTHENTICATE) fell into the generic 6D00 "unsupported"
+  fallback - now 6985 (SW_CONDITIONS), since no profile here claims DDA
+  and the command is recognised, just not currently allowed.
+
+Tests added, all green (testDebugUnitTest + assembleDebug --rerun-tasks,
+all 40 tasks fresh): mastercardMsdGpo_isFormat1AipPlus9F6B_byteExact,
+track2RawForMsdGpo_padsOrTruncatesToExactly37Chars (short/long/exact-37),
+mastercardGpo_msdFalse_stillYieldsThe77Template,
+aidGroup_includes1PayAlongside2Pay,
+selectApp_mastercard_honoursACustomAid_notTheHardcodedLiteral.
+
+Not installed or tapped - no terminal here to test against. The ODA-probe
+build (52e00e8) is still the one waiting on a register tap; this MSD work
+sits on top of it in the same working tree, not yet committed as its own
+commit.
+
+# Next task (register, when back)
+
+Install the ODA-probe build (or this one, once committed, if the MSD path
+should ship alongside it - decide which before the next trip), repeat the
+go/no-go (pidof, dumpsys nfc preferred service + routing), tap once at the
+same amount as the last comparable run if the register allows it, pull the
+receipt. Report TVR byte 1 and the verdict.
 
 # Pre-decided branches
 

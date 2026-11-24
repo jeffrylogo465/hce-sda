@@ -31,6 +31,13 @@ public class ShadowApduService extends HostApduService {
     private static final byte[] SW_CONDITIONS  = hex("6985");
     private static final byte[] SW_ERR         = hex("6F00");
     private static final byte[] PPSE           = hex("325041592E5359532E4444463031");
+    // 1PAY.SYS.DDF01: the legacy/mag-stripe-era directory name, same
+    // application-selection directory as PPSE (2PAY) - some MSD-only or
+    // dual-interface terminals probe this name first. selectInner() and
+    // trackState() both treat the two names as equivalent directory
+    // selects; buildPpse() answers the same directory either way, there is
+    // no separate MSD-only app list to maintain.
+    private static final byte[] PPSE_1PAY      = hex("315041592E5359532E4444463031");
 
     private static final String DEFAULT_AIP = "1880";
     private static final String DEFAULT_AID = "A0000000031010";
@@ -1077,7 +1084,7 @@ public class ShadowApduService extends HostApduService {
             int lc = lcOf(apdu), off = dataOff(apdu);
             if (apdu.length < off + lc) return;
             byte[] name = Arrays.copyOfRange(apdu, off, off + lc);
-            if (Arrays.equals(name, PPSE)) return;
+            if (Arrays.equals(name, PPSE) || Arrays.equals(name, PPSE_1PAY)) return;
             clearApplicationState();
             txnAid = name;
         } else if (ins == 0xA8) {
@@ -1965,6 +1972,78 @@ public class ShadowApduService extends HostApduService {
     }
 
     /**
+     * Mastercard AIP for the dedicated MSD GPO below: 58 40, NOT AIP_MC
+     * (5880). Byte 1 is the same CV+TRM+SDA shape AIP_MC claims - this is
+     * still the one method this profile can structurally back, same
+     * reasoning as AIP_MC's own doc - but byte 2 is 0x40 (mag-stripe mode),
+     * not 0x80 (EMV mode): this GPO IS the MSD exchange, not an EMV one
+     * that happens to also support MSD. A SEPARATE constant on purpose,
+     * not AIP_MC's byte 1 plus a different byte 2 computed here - the ODA
+     * cell and this MSD cell stay decoupled, so a future change to one
+     * cannot silently reach into the other.
+     */
+    private static final String AIP_MC_MSD = "5840";
+
+    /**
+     * The Mastercard MSD GPO, built from the card's own state: format 1 -
+     * 80 { AIP byte 1, AIP byte 2, 9F6B track } - no AFL, no inner 77/82/94
+     * wrapper. MSD is a single round trip by design: the terminal gets the
+     * track-equivalent data straight out of the GPO and never sends READ
+     * RECORD at all, unlike the EMV path (mastercardGpoFromCard(), AFL
+     * pointing at syntheticRecord()/keyChainRecord()).
+     *
+     * This is a NEW shape, not the generic msd-vs-emv split gpo() already
+     * has (format 1, AIP+AFL, the track read later via READ RECORD) - that
+     * generic split was built for profiles with no dedicated MSD tap
+     * shape of their own, and msdAip() masking Mastercard's own canned
+     * EMV-mode script line (the 77/82/94 template, AFL and all) produced
+     * neither a real MSD payload nor a coherent EMV one. This method
+     * replaces that for Mastercard specifically - see the dispatch site
+     * that calls it.
+     */
+    private byte[] mastercardMsdGpo() {
+        byte[] aip = hex(AIP_MC_MSD);
+        byte[] track = track2RawForMsdGpo();
+
+        tap("-- msd: mastercard gpo aip=" + bytesToHex(aip)
+                + " 9f6b=" + bytesToHex(track));
+
+        return tlv(0x80, cat(aip, tlv(0x9F6B, track)));
+    }
+
+    /**
+     * The "track2" box's raw digits, verbatim - no PAN/expiry/service
+     * synthesis fallback the way track2() has for tag 57, because this
+     * feeds 9F6B in mastercardMsdGpo() and a synthesized fallback there
+     * would silently serve data nobody typed in.
+     *
+     * PADDED TO EXACTLY 37 CHARACTERS before the hex decode: Mastercard's
+     * MSD kernel expects a fixed 19-byte (38-nibble) 9F6B field, the same
+     * "odd length pads one trailing F nibble" convention Hex.hexLenient()
+     * already applies elsewhere in this class (msdRecord()) - 37 significant
+     * digits plus that one implicit pad nibble is 38, a whole 19 bytes.
+     * Shorter input is padded with trailing F's to reach 37 first (not left
+     * as a shorter field); longer input is truncated to the first 37 - a
+     * MSD field this method cannot send can only be worse than measured.
+     *
+     * An empty box pads to all-F - a complete sentinel the EMV "unused
+     * digit" convention already assigns a meaning to, not zeros, which
+     * would look like actual digit data (and, with the PAN sitting first
+     * in a real track, zeros where this app has nothing configured would
+     * read as a card number of all zeros rather than as "nothing typed").
+     */
+    private byte[] track2RawForMsdGpo() {
+        String t = p("track2", "").toUpperCase().replace('=', 'D');
+        t = t.replaceAll("[^0-9A-F]", "");
+        while (t.startsWith("B")) t = t.substring(1);
+
+        if (t.length() > 37) t = t.substring(0, 37);
+        while (t.length() < 37) t += "F";
+
+        return Hex.hexLenient(t);
+    }
+
+    /**
      * SFI/record that carries the skeleton, as "ssrr" hex.
      *
      * Falls back to the first AFL entry, then to SFI 1 rec 1.
@@ -2033,7 +2112,17 @@ public class ShadowApduService extends HostApduService {
 
     @Override
     public byte[] processCommandApdu(byte[] apdu, Bundle extras) {
-        Log.w(TAG, "APDU ins=" + (apdu == null ? "null" : String.format("%02X", apdu[1] & 0xFF)));
+        // FIX: apdu[1] was read here unguarded - a null apdu was caught by
+        // the ternary, but a non-null apdu shorter than 2 bytes (an empty
+        // array, or a single stray byte) threw ArrayIndexOutOfBoundsException
+        // OUTSIDE the try below, crashing the service on the one line meant
+        // to log what the terminal sent before anything else could fail.
+        // The log stays outside the try on purpose - it is the record of
+        // what arrived even when everything after it throws - so the fix is
+        // a length guard here, not moving the line inside.
+        Log.w(TAG, "APDU ins=" + (apdu == null ? "null"
+                : apdu.length < 2 ? "short(" + apdu.length + "B)"
+                : String.format("%02X", apdu[1] & 0xFF)));
         try {
             if (apdu == null || apdu.length < 4) return SW_MALFORMED;
 
@@ -2082,7 +2171,7 @@ public class ShadowApduService extends HostApduService {
                 if (apdu.length >= off0 + lc0) {
                     byte[] nm = new byte[lc0];
                     System.arraycopy(apdu, off0, nm, 0, lc0);
-                    if (Arrays.equals(nm, PPSE)) sawPpse = true;
+                    if (Arrays.equals(nm, PPSE) || Arrays.equals(nm, PPSE_1PAY)) sawPpse = true;
                 }
             }
 
@@ -2198,20 +2287,34 @@ public class ShadowApduService extends HostApduService {
                 }
 
                 if (ins == 0xA8) {
-                    // The script path returns before gpo() runs, so the MSD mask
-                    // inside gpo() never applied while a script was armed - and
-                    // every profile arms one. Same edit, applied to the bytes.
-                    if (isMsd()) {
+                    // Format 2, no AC in it yet - the Mastercard shape
+                    // (Visa's qVSDC script always carries 9F26/9F27). Used
+                    // below to pick the Mastercard-specific GPO builder,
+                    // MSD or EMV, instead of the generic replacements.
+                    boolean mastercardShape = readTag(body, new int[]{0}) == 0x77
+                            && findTag(body, 0x9F26) == null;
+
+                    if (mastercardShape && isMsd()) {
+                        // Mastercard's own dedicated MSD GPO: format 1, AIP +
+                        // 9F6B, no AFL at all - a single round trip, not the
+                        // generic msd-vs-emv split below. msdAip() only
+                        // masks AIP bits in whatever framing the canned line
+                        // already has, and Mastercard's canned line is the
+                        // EMV-mode 77/82/94 template - masking its AIP bits
+                        // produced neither a real MSD payload nor a coherent
+                        // EMV one. See mastercardMsdGpo()'s own doc.
+                        body = mastercardMsdGpo();
+                        tap("-- script: MSD GPO built from the card, not replayed");
+                    } else if (isMsd()) {
+                        // The script path returns before gpo() runs, so the MSD mask
+                        // inside gpo() never applied while a script was armed - and
+                        // every profile arms one. Same edit, applied to the bytes.
                         body = msdAip(body);
                         tap("-- msd: gpo format 1 aip=" + bytesToHex(capturedAip(body))
                                 + " afl=" + bytesToHex(Arrays.copyOfRange(body, 2, body.length))
                                 + " payload=" + body.length + "B " + bytesToHex(body));
-                    } else if (readTag(body, new int[]{0}) == 0x77
-                            && findTag(body, 0x9F26) == null) {
-                        // Format 2, no AC in it yet - the Mastercard shape
-                        // (Visa's qVSDC script always carries 9F26/9F27, MSD
-                        // is format 1 and already handled above). Build the
-                        // response from the card instead of replaying the
+                    } else if (mastercardShape) {
+                        // Build the response from the card instead of replaying the
                         // canned line - see mastercardGpoFromCard()'s own doc
                         // and term-new6.log for why the canned AIP alone
                         // stalled a real terminal before READ RECORD.
@@ -2301,6 +2404,19 @@ public class ShadowApduService extends HostApduService {
                 byte[] ch = new byte[8];
                 rnd.nextBytes(ch);
                 out = cat(ch, SW_OK);
+            } else if (ins == 0x88) {
+                // FIX: this fell into the generic SW_UNSUPPORTED (6D00)
+                // below, "instruction not supported" - wrong for a command
+                // this app knows perfectly well, INTERNAL AUTHENTICATE. No
+                // profile here claims DDA (AIP_MC claims SDA only - see its
+                // own doc), so a terminal should never send this on this
+                // path; if one does anyway, 6985 (SW_CONDITIONS, conditions
+                // of use not satisfied) is the honest EMV answer - the
+                // command is recognised and currently not allowed, not
+                // unimplemented. AssetCardEngine's own 0x88 case
+                // (internalAuthenticate()) is unrelated - a different
+                // engine, reached only when asset-card routing is on.
+                out = SW_CONDITIONS;
             } else {
                 out = SW_UNSUPPORTED;
             }
@@ -2341,7 +2457,7 @@ public class ShadowApduService extends HostApduService {
         byte[] name = new byte[lc];
         System.arraycopy(apdu, off, name, 0, lc);
 
-        if (Arrays.equals(name, PPSE)) {
+        if (Arrays.equals(name, PPSE) || Arrays.equals(name, PPSE_1PAY)) {
             return cat(buildPpse(), SW_OK);
         }
 
