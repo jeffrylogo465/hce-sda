@@ -1856,11 +1856,15 @@ public class ShadowApduService extends HostApduService {
      * read; dropping it alongside the AIP revert narrows the GPO back to
      * exactly what a plain card would send.
      *
-     * 9F6B is still NOT sent here: it is an MSD track 2 equivalent and this
-     * profile is EMV mode only. A served GPO that still carries it (or looks
-     * otherwise unchanged across taps) is not coming from this method -
-     * capturedAip()/findTag() on the actual bytes in the tap log is the way
-     * to confirm what went out, not a visual "looks the same."
+     * 9F6B is NOT sent here: it is an MSD track 2 equivalent and this
+     * profile is EMV mode only. It was briefly appended below (a stray
+     * fallback through msdRecord()/track2() that this doc comment never
+     * matched) while isolating the post-GPO stall; a tap against a real
+     * terminal still stalled at the same point with it present, so it
+     * bought nothing and is reverted. A served GPO that carries 9F6B (or
+     * looks otherwise unchanged across taps) is not coming from this
+     * method - capturedAip()/findTag() on the actual bytes in the tap log
+     * is the way to confirm what went out, not a visual "looks the same."
      */
     private static final String AFL_MC_PROBE_WITH_AID = "08010100";
 
@@ -1874,15 +1878,9 @@ public class ShadowApduService extends HostApduService {
 
         tap("-- gpo mc box=" + p("aip", "") + " served=" + bytesToHex(aip));
 
-        byte[] rec = msdRecord();
-        byte[] t = rec == null ? null : findTag(rec, 0x9F6B);
-        if (t == null && rec != null) t = findTag(rec, 0x57);
-        if (t == null) t = track2();
-
         return tlv(0x77, cat(
                 tlv(0x82, aip),
-                tlv(0x94, hex(AFL_MC_PROBE_WITH_AID)),
-                tlv(0x9F6B, t)));
+                tlv(0x94, hex(AFL_MC_PROBE_WITH_AID))));
     }
 
     /**
