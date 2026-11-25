@@ -146,6 +146,45 @@ to force there) and 9F0D/9F0E/9F0F are already unconditional zeros in
 syntheticRecord() regardless of any box (nothing to add there either). The
 toggle's only real effect is the 8E override.
 
+REBUILT to "the paper's" own shape - the first attempt (format 1, AIP +
+9F6B + 9F6C inline, no AFL, single round trip) was this app's own guess,
+not the real spec:
+
+- mastercardMsdGpo(): format 2 now - 77 0A { 82 02 5840, 94 04 08010100 }.
+  No 9F6B, no 9F6C in the GPO at all. AFL is one plain entry, SFI 1 rec 1,
+  NOT claimed for offline data authentication.
+- mastercardMsdRecord() (new): READ RECORD now actually gets served for
+  Mastercard MSD - wired into readRecord() ahead of the old box-driven
+  "msdrec" skeleton check, which would otherwise have fallen through to
+  syntheticRecord() (the EMV record) for an untyped box, exactly the bug
+  this closes. Tag order is the paper's own: 9F6C, 9F62, 9F63, 56, 9F64,
+  9F65, 9F66, 9F6B, 9F67 - literal values from the spec for every tag
+  except 56 (track 1) and 9F6B (track 2).
+- 9F6C is 0001 now, not the FFFF a real card's key-chain record gave as a
+  plausible stand-in for the first attempt - 0001 is the paper's own
+  value and supersedes it.
+- Track 2 (9F6B) discretionary is exactly 13 zeros then one F - not
+  F-padding to a fixed width the way the reverted GPO-level field was.
+  Built from pan()/expiry6()/service(), not a free-text box.
+- Track 1 (56) is the ONE thing not given literal bytes - built from the
+  same PAN/holder()/expiry()/service() fields as a best-effort ISO 7813
+  shape ("B" + PAN + "^" + name + "^" + YYMM + service, no %/? sentinels,
+  no LRC - EMV's own tag content, not magnetic framing). Flagged, not
+  silently guessed: confirm this against the paper before trusting it.
+- 80 2A (CCC) now has a Mastercard-MSD-specific placeholder,
+  mastercardMsdCcc(): 77 { 9F61 02 0000, 9F60 02 0000, 9F36 02 <ATC> }.
+  The existing ccc() (real CVC3 crypto, 3DES under KDCVC3) is untouched -
+  it reads a different, box-driven record shape this one doesn't use;
+  wiring the real crypto to mastercardMsdRecord() is later work.
+
+Old tests for the format-1 GPO deleted and replaced:
+mastercardMsdGpo_isFormat2WithAFLPointingAtSfi1Rec1_byteExact,
+mastercardMsdRecord_sfi1Rec1_byteExact,
+mastercardMsdCcc_isZeroedCvc3sPlusTheRealAtc_byteExact (ATC boxed to a
+known value for a predictable 9F36). mastercardGpo_msdFalse_
+stillYieldsThe77Template (the MSD=0 regression test) is untouched and
+still passes.
+
 Not installed or tapped - no terminal here to test against. The ODA-probe
 build (52e00e8) is still the one waiting on a register tap; this MSD work
 sits on top of it in the same working tree.

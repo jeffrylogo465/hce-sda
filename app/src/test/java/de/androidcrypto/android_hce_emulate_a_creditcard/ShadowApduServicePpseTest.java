@@ -520,82 +520,85 @@ public class ShadowApduServicePpseTest {
                 .putString("card0_msd", on ? "1" : "0").commit();
     }
 
-    private void setTrack2Box(String raw) {
+    private void setAtc(String hex4) {
         Prefs.get(RuntimeEnvironment.getApplication()).edit()
-                .putString("card0_track2", raw).commit();
+                .putString("card0_atc", hex4).commit();
     }
 
     /**
-     * mastercardMsdGpo(): format 1 - 80 { AIP 58 40, 9F6B track, 9F6C app
-     * version } - no AFL, no inner 77/82/94 wrapper, no READ RECORD
-     * needed. This replaces msdAip()'s generic bit-masking of the canned
-     * EMV-mode script line for Mastercard specifically (see the dispatch
-     * site's own doc): that line is the 77/82/94 template, and masking its
-     * AIP bits left the AFL and everything else EMV-shaped in place -
-     * neither a real MSD payload nor a coherent EMV one.
-     *
-     * 9F6C = FFFF is the real Mastercard M/Chip card dump's own value
-     * (inter_claudiones.credito.json) for Kernel 2's meaning of that tag -
-     * mag-stripe application version, not Visa's CTQ - included so a
-     * Kernel 2 MSD terminal that expects it does not read its absence as
-     * "MSD unsupported."
-     *
-     * The track2 box here (21 significant hex digits after the PAN/D/expiry
-     * shape) is short on purpose, to also exercise the pad-to-37 case in
-     * the same byte-exact assertion - track2RawForMsdGpo_padsShortLong...()
-     * below isolates the boundary cases on their own.
+     * mastercardMsdGpo(), rebuilt to the paper's shape: format 2, not the
+     * first attempt's format 1 - 77 0A { 82 02 5840, 94 04 08 01 01 00 }.
+     * No 9F6B, no 9F6C here at all now - the AFL names SFI 1 rec 1
+     * (mastercardMsdRecord(), not claimed for offline data authentication)
+     * and the terminal reads it via READ RECORD; this was never the
+     * single-round-trip exchange the first attempt assumed.
      */
     @Test
-    public void mastercardMsdGpo_isFormat1AipPlus9F6BPlus9F6C_byteExact() {
+    public void mastercardMsdGpo_isFormat2WithAFLPointingAtSfi1Rec1_byteExact() {
         setProfile("MASTERCARD");
         setMsd(true);
-        setTrack2Box("4111111111111111D2912");
         start();
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
 
-        String gpo = send("80A8000002830000");
-        assertEquals("801D58409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9F6C02FFFF9000", gpo);
+        assertEquals("770A820258409404080101009000",
+                send("80A8000002830000"));
     }
 
     /**
-     * track2RawForMsdGpo(): the box's raw digits, padded with trailing F's
-     * to exactly 37 characters when short, truncated to the first 37 when
-     * long, left alone at exactly 37 - then Hex.hexLenient()'s own
-     * odd-length pad (one more trailing F) always makes the final 9F6B
-     * value 38 hex characters, 19 bytes, matching Mastercard's fixed MSD
-     * track-2 field length. All three boundaries land on the same 19-byte
-     * shape; only the long case's content differs after truncation. 9F6C
-     * trails every case unchanged - it is not track2-derived.
+     * mastercardMsdRecord(): SFI 1 rec 1, the record the GPO's AFL above
+     * points to. Tag order is the paper's own, not this class's usual
+     * tag-number order - 9F6C, 9F62, 9F63, 56, 9F64, 9F65, 9F66, 9F6B,
+     * 9F67 - pinned exactly as given.
+     *
+     * 9F6C = 0001 here, NOT the FFFF the first attempt at the (reverted)
+     * GPO-level field used - that came from a real card's own key-chain
+     * record read as a plausible stand-in; 0001 is the paper's own value
+     * for this field and supersedes it.
+     *
+     * Track 1 (56) was not given literal bytes the way every other tag
+     * here was - built from this profile's default PAN/holder(null)/
+     * expiry/service: "B4111111111111111^^3112201". Track 2 (9F6B) is
+     * PAN + D + expiry(YYMM) + service + 13 zeros + a single F - not
+     * F-padding to a fixed width, the fixed discretionary shape the paper
+     * gives, and for this 16-digit default PAN it lands on exactly 19
+     * bytes with nothing left over.
      */
     @Test
-    public void track2RawForMsdGpo_padsOrTruncatesToExactly37Chars() {
+    public void mastercardMsdRecord_sfi1Rec1_byteExact() {
         setProfile("MASTERCARD");
         setMsd(true);
-
-        setTrack2Box("4111111111111111D2912");
         start();
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
-        assertEquals("short box: padded with F's to 37, then hexLenient's own trailing F",
-                "801D58409F6B134111111111111111D2912FFFFFFFFFFFFFFFFF9F6C02FFFF9000",
-                send("80A8000002830000"));
+        send("80A8000002830000");
 
-        setTrack2Box("4111111111111111D29122011123456789012345");
+        assertEquals("705B9F6C0200019F62060000000000389F630600000000F000"
+                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200389F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+                        + "9000",
+                send("00B2010C00"));
+    }
+
+    /**
+     * mastercardMsdCcc() - a placeholder, not ccc()'s real CVC3 (that
+     * method reads a different record shape, see its own doc): 77
+     * { 9F61 02 0000, 9F60 02 0000, 9F36 02 <ATC> }. "atc" boxed to 0005
+     * so the served 9F36 (0006, the next value) is fully predictable
+     * rather than depending on this class's own default.
+     */
+    @Test
+    public void mastercardMsdCcc_isZeroedCvc3sPlusTheRealAtc_byteExact() {
+        setProfile("MASTERCARD");
+        setMsd(true);
+        setAtc("0005");
         start();
         send(SELECT_PPSE);
         send(SELECT_A0000000041010);
-        assertEquals("long box: truncated to the first 37 chars, then hexLenient's trailing F",
-                "801D58409F6B134111111111111111D29122011123456789012F9F6C02FFFF9000",
-                send("80A8000002830000"));
+        send("80A8000002830000");
+        send("00B2010C00");
 
-        setTrack2Box("0123456789012345678901234567890123456");
-        start();
-        send(SELECT_PPSE);
-        send(SELECT_A0000000041010);
-        assertEquals("exactly-37 box: untouched at that stage, then hexLenient's trailing F",
-                "801D58409F6B130123456789012345678901234567890123456F9F6C02FFFF9000",
-                send("80A8000002830000"));
+        assertEquals("770F9F610200009F600200009F360200069000",
+                send("802A8E8004000000000000"));
     }
 
     /**

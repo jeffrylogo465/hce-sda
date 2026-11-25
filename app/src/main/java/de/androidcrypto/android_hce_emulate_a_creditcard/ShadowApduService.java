@@ -2025,85 +2025,128 @@ public class ShadowApduService extends HostApduService {
     private static final String AIP_MC_MSD = "5840";
 
     /**
-     * 9F6C under Mastercard's own Kernel 2 is NOT the Visa CTQ meaning of
-     * the same tag number - it is the mag-stripe application version
-     * number. Confirmed from a real Mastercard M/Chip card dump
-     * (inter_claudiones.credito.json, the same QA reader app's bundled
-     * test-card script already used for the ODA cell): that card serves
-     * 9F6C = FFFF in its own key-chain record. FFFF reads as an unset/
-     * placeholder sentinel, not a real version number this app happens to
-     * know, but it is the real card's own value, not an invented one.
-     *
-     * Included here, not left out the way the ODA cell's placeholder tags
-     * are: a Kernel 2 MSD terminal can expect this tag in the MSD
-     * exchange, and its absence would read as "MSD unsupported" - a
-     * different, less useful failure than the one a wrong-but-present
-     * value produces.
-     */
-    private static final String MSD_9F6C_APP_VERSION = "FFFF";
-
-    /**
-     * The Mastercard MSD GPO, built from the card's own state: format 1 -
-     * 80 { AIP byte 1, AIP byte 2, 9F6B track, 9F6C app version } - no AFL,
-     * no inner 77/82/94 wrapper. MSD is a single round trip by design: the
-     * terminal gets the track-equivalent data straight out of the GPO and
-     * never sends READ RECORD at all, unlike the EMV path
-     * (mastercardGpoFromCard(), AFL pointing at
-     * syntheticRecord()/keyChainRecord()) - so 9F6C goes here, in the only
-     * record this exchange ever serves, not in a separate READ RECORD
-     * response the real card keeps it in.
-     *
-     * This is a NEW shape, not the generic msd-vs-emv split gpo() already
-     * has (format 1, AIP+AFL, the track read later via READ RECORD) - that
-     * generic split was built for profiles with no dedicated MSD tap
-     * shape of their own, and msdAip() masking Mastercard's own canned
-     * EMV-mode script line (the 77/82/94 template, AFL and all) produced
-     * neither a real MSD payload nor a coherent EMV one. This method
-     * replaces that for Mastercard specifically - see the dispatch site
-     * that calls it.
+     * The Mastercard MSD GPO: format 2, to the paper's own shape -
+     * 77 0A { 82 02 5840, 94 04 08 01 01 00 }. REBUILT from the first
+     * attempt (format 1, AIP + 9F6B + 9F6C inline, no AFL at all): that
+     * shape was this app's own guess at a single-round-trip MSD exchange,
+     * not what the spec actually calls for. The real shape is format 2
+     * with a plain one-entry AFL (SFI 1 rec 1, not claimed for offline
+     * data authentication - 9F6B/9F6C live in that record now, not here)
+     * - READ RECORD is NOT skipped after all; mastercardMsdRecord() is
+     * what the AFL sends the terminal to.
      */
     private byte[] mastercardMsdGpo() {
         byte[] aip = hex(AIP_MC_MSD);
-        byte[] track = track2RawForMsdGpo();
-        byte[] appVersion = hex(MSD_9F6C_APP_VERSION);
 
-        tap("-- msd: mastercard gpo aip=" + bytesToHex(aip)
-                + " 9f6b=" + bytesToHex(track)
-                + " 9f6c=" + bytesToHex(appVersion));
+        tap("-- msd: mastercard gpo aip=" + bytesToHex(aip) + " afl=08010100");
 
-        return tlv(0x80, cat(aip, tlv(0x9F6B, track), tlv(0x9F6C, appVersion)));
+        return tlv(0x77, cat(
+                tlv(0x82, aip),
+                tlv(0x94, hex("08010100"))));
     }
 
     /**
-     * The "track2" box's raw digits, verbatim - no PAN/expiry/service
-     * synthesis fallback the way track2() has for tag 57, because this
-     * feeds 9F6B in mastercardMsdGpo() and a synthesized fallback there
-     * would silently serve data nobody typed in.
+     * Track 2 Equivalent Data (9F6B) for mastercardMsdRecord(): PAN + D +
+     * expiry(YYMM) + service + discretionary, the same field order
+     * track2() already uses for tag 57 - but NOT that method, and no box
+     * read at all: the discretionary digits here are fixed, not typed.
      *
-     * PADDED TO EXACTLY 37 CHARACTERS before the hex decode: Mastercard's
-     * MSD kernel expects a fixed 19-byte (38-nibble) 9F6B field, the same
-     * "odd length pads one trailing F nibble" convention Hex.hexLenient()
-     * already applies elsewhere in this class (msdRecord()) - 37 significant
-     * digits plus that one implicit pad nibble is 38, a whole 19 bytes.
-     * Shorter input is padded with trailing F's to reach 37 first (not left
-     * as a shorter field); longer input is truncated to the first 37 - a
-     * MSD field this method cannot send can only be worse than measured.
-     *
-     * An empty box pads to all-F - a complete sentinel the EMV "unused
-     * digit" convention already assigns a meaning to, not zeros, which
-     * would look like actual digit data (and, with the PAN sitting first
-     * in a real track, zeros where this app has nothing configured would
-     * read as a card number of all zeros rather than as "nothing typed").
+     * DISCRETIONARY IS 13 ZEROS THEN A SINGLE F, not F-padding to a fixed
+     * field width the way the first (reverted) attempt at this GPO padded
+     * a typed box. For a 16-digit PAN that totals PAN(16) + D(1) + YYMM(4)
+     * + service(3) + 0000000000000(13) + F(1) = 38 digits, 19 bytes,
+     * matching 9F6B's own length (13 hex) with nothing left over to pad.
      */
-    private byte[] track2RawForMsdGpo() {
-        String t = p("track2", "").toUpperCase().replace('=', 'D');
-        t = t.replaceAll("[^0-9A-F]", "");
-        while (t.startsWith("B")) t = t.substring(1);
+    private byte[] mastercardMsdTrack2() {
+        String t = pan() + "D" + expiry6().substring(0, 4)
+                + service() + "0000000000000" + "F";
+        if (t.length() % 2 != 0) t += "F";
+        return hex(t);
+    }
 
-        if (t.length() > 37) t = t.substring(0, 37);
-        while (t.length() < 37) t += "F";
+    /**
+     * Track 1 Data (56) for mastercardMsdRecord(): B + PAN + ^ + name + ^
+     * + expiry(YYMM) + service, the ISO/IEC 7813 field order minus the
+     * physical-stripe start/end sentinels (% and ?) and LRC - EMV's own
+     * tag 56 carries the logical content, not the magnetic framing.
+     *
+     * NOT GIVEN LITERAL BYTES THE WAY EVERY OTHER TAG IN THIS RECORD WAS -
+     * built from this profile's own PAN/holder/expiry/service fields
+     * (same ones track2()/syntheticRecord() already read) because nothing
+     * else in the spec named its content. holder() null (no name typed)
+     * serves an empty name field between the two carets, not an invented
+     * one.
+     */
+    private byte[] mastercardMsdTrack1() {
+        byte[] h = holder();
+        String name = h == null ? "" : new String(h, java.nio.charset.StandardCharsets.ISO_8859_1);
+        String t = "B" + pan() + "^" + name + "^" + expiry6().substring(0, 4) + service();
+        return t.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+    }
 
-        return Hex.hexLenient(t);
+    /**
+     * The three-digit service code, as track2() already reads it, factored
+     * out so mastercardMsdTrack1()/mastercardMsdTrack2() share the exact
+     * same value track2() itself would use for tag 57 - one box, one
+     * reading of it.
+     */
+    private String service() {
+        String svc = p("service", "201").replaceAll("[^0-9]", "");
+        while (svc.length() < 3) svc = "0" + svc;
+        return svc.substring(0, 3);
+    }
+
+    /**
+     * The MSD record mastercardMsdGpo()'s AFL sends the terminal to - SFI
+     * 1, record 1, format exactly as the paper gives it: 9F6C, 9F62, 9F63,
+     * 56 (track 1), 9F64, 9F65, 9F66, 9F6B (track 2), 9F67, in that order -
+     * byte-exact, not reordered to this class's usual tag-number sequence.
+     *
+     * 9F6C here is 0001, NOT the FFFF the first (reverted) attempt at this
+     * GPO used - that value came from a real card's key-chain record
+     * (inter_claudiones.credito.json) read as a plausible stand-in; 0001
+     * is what the paper itself specifies for this field, and supersedes
+     * it. 9F62/9F63/9F64/9F65/9F66/9F67 are literal constants from the
+     * same source - this app has no per-card basis to vary them yet.
+     */
+    private byte[] mastercardMsdRecord() {
+        byte[] track1 = mastercardMsdTrack1();
+        byte[] track2 = mastercardMsdTrack2();
+
+        tap("-- msd: mastercard record track1=" + bytesToHex(track1)
+                + " track2=" + bytesToHex(track2));
+
+        return tlv(0x70, cat(
+                tlv(0x9F6C, hex("0001")),
+                tlv(0x9F62, hex("000000000038")),
+                tlv(0x9F63, hex("00000000F000")),
+                tlv(0x56, track1),
+                tlv(0x9F64, hex("04")),
+                tlv(0x9F65, hex("0038")),
+                tlv(0x9F66, hex("1E00")),
+                tlv(0x9F6B, track2),
+                tlv(0x9F67, hex("04"))));
+    }
+
+    /**
+     * COMPUTE CRYPTOGRAPHIC CHECKSUM for the Mastercard MSD record above -
+     * NOT ccc(), which reads msdRecord()'s own box-driven skeleton
+     * (9F69/9F6A bitmaps, a UDOL) that mastercardMsdRecord() does not use
+     * and was never meant to. A placeholder for now: 77 { 9F61 02 0000,
+     * 9F60 02 0000, 9F36 02 <ATC> } - zero CVC3s for both tracks, the real
+     * ATC. No key material, no UN extraction, no 3DES - ccc() already has
+     * all of that built and tested for the box-driven MSD record; wiring
+     * it to this one is later work, not this cell's.
+     */
+    private byte[] mastercardMsdCcc() {
+        String atc = txnAtc();
+        byte[] body = cat(
+                tlv(0x9F61, hex("0000")),
+                tlv(0x9F60, hex("0000")),
+                tlv(0x9F36, hex(atc)));
+        commitAtc();
+        tap("-- msd: mastercard ccc atc=" + atc);
+        return cat(tlv(0x77, body), SW_OK);
     }
 
     /**
@@ -2358,14 +2401,15 @@ public class ShadowApduService extends HostApduService {
                             && findTag(body, 0x9F26) == null;
 
                     if (mastercardShape && isMsd()) {
-                        // Mastercard's own dedicated MSD GPO: format 1, AIP +
-                        // 9F6B, no AFL at all - a single round trip, not the
-                        // generic msd-vs-emv split below. msdAip() only
-                        // masks AIP bits in whatever framing the canned line
-                        // already has, and Mastercard's canned line is the
-                        // EMV-mode 77/82/94 template - masking its AIP bits
-                        // produced neither a real MSD payload nor a coherent
-                        // EMV one. See mastercardMsdGpo()'s own doc.
+                        // Mastercard's own dedicated MSD GPO: format 2, AIP
+                        // 5840, a plain one-entry AFL pointing at
+                        // mastercardMsdRecord() - not the generic msd-vs-emv
+                        // split below. msdAip() only masks AIP bits in
+                        // whatever framing the canned line already has, and
+                        // Mastercard's canned line is the EMV-mode 77/82/94
+                        // template with the EMV AFL still attached - masking
+                        // its AIP bits left that AFL in place, pointing at
+                        // the wrong record. See mastercardMsdGpo()'s own doc.
                         body = mastercardMsdGpo();
                         tap("-- script: MSD GPO built from the card, not replayed");
                     } else if (isMsd()) {
@@ -2458,7 +2502,11 @@ public class ShadowApduService extends HostApduService {
             } else if (ins == 0xAE) {
                 out = genac(apdu);
             } else if (ins == 0x2A) {
-                out = ccc(apdu);
+                // Mastercard's own MSD record (mastercardMsdRecord()) is not
+                // the box-driven skeleton ccc() reads - see
+                // mastercardMsdCcc()'s own doc.
+                out = (isMsd() && "MASTERCARD".equals(activeProfile().name()))
+                        ? mastercardMsdCcc() : ccc(apdu);
             } else if (ins == 0xCA) {
                 out = getData(apdu);
             } else if (ins == 0x20) {
@@ -3157,6 +3205,18 @@ public class ShadowApduService extends HostApduService {
     private byte[] readRecord(int p1, int p2) {
         int sfi = (p2 & 0xFF) >> 3;
         int rec = p1 & 0xFF;
+
+        // Mastercard's own MSD record, the one mastercardMsdGpo()'s AFL
+        // points to - checked FIRST, ahead of the generic box-driven MSD
+        // skeleton below: without this, an untyped "msdrec" box (the
+        // normal, untouched state for this profile) fell through all the
+        // way to syntheticRecord(), the EMV record, serving CDOL/CVM data
+        // to a terminal that asked for the MSD track.
+        if (isMsd() && sfi == 1 && rec == 1
+                && "MASTERCARD".equals(activeProfile().name())) {
+            tap("-- rec sfi=1 rec=1 (mastercard msd)");
+            return cat(mastercardMsdRecord(), SW_OK);
+        }
 
         if (isMsd()) {
             byte[] msd = msdRecord();
