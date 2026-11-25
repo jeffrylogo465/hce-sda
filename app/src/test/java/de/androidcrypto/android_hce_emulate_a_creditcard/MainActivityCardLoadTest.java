@@ -342,4 +342,51 @@ public class MainActivityCardLoadTest {
         assertEquals("reopening must reload what was actually saved, not the old track2 tail",
                 "0000000000000", reopenedDisc.getText().toString());
     }
+
+    /**
+     * FIX: applyProfile()'s known-table block (KNOWN[0], PAN
+     * 5287250568943496) used to write expiry/discretionary/track2
+     * unconditionally every time it ran for this PAN - and before this
+     * commit, onSave() called maybeProfile() -> applyProfile() on every
+     * save. A discretionary set away from the known value (14129745)
+     * never had a chance to survive a save for this specific PAN.
+     *
+     * Covers the save itself, a fresh-Activity reopen (same prefs), a
+     * same-slot rebind, and switching to a second card and back - all on
+     * the one PAN this repo's own KNOWN table makes the bug concrete and
+     * reproducible with, not a PAN picked to avoid it.
+     */
+    @Test
+    public void knownPanDiscretionaryEdit_survivesSaveAndEveryReloadPath() throws Exception {
+        type(etPan, "5287250568943496");
+        assertEquals("14129745", etDiscretionary.getText().toString());
+
+        type(etDiscretionary, "0000000000000");
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("immediately after Save",
+                "0000000000000", etDiscretionary.getText().toString());
+
+        MainActivity reopened =
+                Robolectric.buildActivity(MainActivity.class).create().start().resume().get();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("after reopening (fresh Activity instance, same prefs)",
+                "0000000000000",
+                ((EditText) reopened.findViewById(R.id.etDiscretionary)).getText().toString());
+
+        java.lang.reflect.Method bindCard =
+                MainActivity.class.getDeclaredMethod("bindCard", int.class);
+        bindCard.setAccessible(true);
+        bindCard.invoke(activity, 0);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("after re-binding the same slot",
+                "0000000000000", etDiscretionary.getText().toString());
+
+        activity.findViewById(R.id.btnAdd).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        bindCard.invoke(activity, 0);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("after adding a second card and switching back",
+                "0000000000000", etDiscretionary.getText().toString());
+    }
 }

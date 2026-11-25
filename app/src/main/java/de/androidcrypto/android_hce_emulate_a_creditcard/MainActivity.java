@@ -776,7 +776,10 @@ public class MainActivity extends AppCompatActivity {
      * The capture is wiped so an old PPSE or GPO cannot get in front of the
      * profile. The script box is only blanked when nothing is armed.
      *
-     * A known dump carries its own expiry, service and DD. Anything else only
+     * A known dump carries its own expiry, service and DD - written only when
+     * the box is blank or already holds that same value (FIX: this used to
+     * write them unconditionally, clobbering a hand edit the next time this
+     * ran for the same PAN - see the block's own comment). Anything else only
      * gets the expiry and service defaults, and no DD, because the CSC is on the
      * plastic and cannot be derived from the number.
      *
@@ -788,11 +791,13 @@ public class MainActivity extends AppCompatActivity {
      * catches a field the user has not moved, and leaves a hand-set 0800 / 0 /
      * empty alone.
      *
-     * THE PIN IS THE STRONGER GATE. onSave() runs maybeProfile(), so a save used
-     * to walk an EMV card back to 1880 / MSD 1 / CID 80 through this method. A
-     * pinned card now keeps exactly what is in the boxes and only a network
-     * change re-stamps the shape. IAD and ATC stay on newNet either way - both
-     * are genuinely network-specific and neither is something you hand-hold.
+     * THE PIN IS THE STRONGER GATE. onSave() no longer runs maybeProfile() at
+     * all (FIX: it used to, and a save walked an EMV card back to 1880 / MSD 1 /
+     * CID 80 through this method on every save, not just a network change).
+     * maybeProfile() now only runs from the PAN/track2 filler and from
+     * bindCard() - a save is not a profile-re-seed event. IAD and ATC stay on
+     * newNet either way - both are genuinely network-specific and neither is
+     * something you hand-hold.
      *
      * THE SERVICE CODE IS THE USER'S. KNOWN carries the plastic's 201; a card
      * held at 200 must not be walked back to it here, or every profile touch
@@ -828,10 +833,23 @@ public class MainActivity extends AppCompatActivity {
         if (known != null) {
             String svc = t(etService);
             if (svc.length() != 3) svc = known[2];
-            etExpiry.setText(known[1]);
+            // FIX: expiry and discretionary used to be written
+            // unconditionally here, clobbering a hand-typed value the
+            // moment this method ran again for the same PAN - the same
+            // class of bug the aip/msd/cid fields above are already
+            // guarded against (isEmpty() or equal to what would be
+            // written anyway). There is no "previous network's own
+            // default" to compare against for a KNOWN-table value the
+            // way there is for aip/msd/cid, so the comparison here is
+            // against what this call is ABOUT to write: blank, or
+            // already that exact value, is safe to (re)write; anything
+            // else is the user's and is left alone.
+            String exp = t(etExpiry);
+            if (exp.isEmpty() || exp.equals(known[1])) { etExpiry.setText(known[1]); exp = known[1]; }
             etService.setText(svc);
-            etDiscretionary.setText(known[3]);
-            etTrack2.setText(pan + "D" + known[1] + svc + known[3]);
+            String disc = t(etDiscretionary);
+            if (disc.isEmpty() || disc.equals(known[3])) { etDiscretionary.setText(known[3]); disc = known[3]; }
+            etTrack2.setText(pan + "D" + exp + svc + disc);
         } else if (t(etExpiry).isEmpty()) {
             etExpiry.setText("3112");
             etService.setText("201");
@@ -2880,9 +2898,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // maybeProfile() returns early on a pinned card, so nothing here re-stamps
-        // AIP, MSD, CID or the script. The shape boxes are the user's.
-        maybeProfile();
+        // FIX: this used to call maybeProfile() here too, re-stamping the
+        // card from the KNOWN table (expiry/discretionary/track2) on
+        // every save, not just when the PAN actually changed. The PAN/
+        // track2 filler above (afterTextChanged, ~line 462) already calls
+        // maybeProfile() once a typed PAN settles - that is the one place
+        // a profile should be (re)applied from, not every save. applyProfile()
+        // also no longer clobbers a hand-edit unconditionally (see its own
+        // doc), so this is belt-and-suspenders, not the only fix - but save
+        // is not a profile-re-seed event and should not call it at all.
 
         String[] hints = BankDirectory.hintsFor(digits(t(etPan)));
         if (hints != null) {

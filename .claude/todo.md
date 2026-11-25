@@ -278,6 +278,33 @@ ComparisonFailure), green with it restored.
 Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
 40 tasks executed fresh.
 
+FOLLOW-UP (ffa5279 did not fully resolve the report): user traced a
+specific root cause - applyProfile()'s known-table block (KNOWN[0], PAN
+5287250568943496) writing expiry/discretionary/track2 unconditionally,
+reachable via maybeProfile() being called from onSave(). Implemented the
+prescribed fix:
+- onSave() no longer calls maybeProfile() at all - the PAN/track2 filler
+  (afterTextChanged) already calls it once a typed PAN settles, which is
+  the only place a profile should be (re)applied from.
+- applyProfile()'s known-table block now guards expiry/discretionary the
+  same way aip/msd/cid already do just above it in the same method: only
+  write when the box is blank or already equals what's about to be
+  written, never when the user has set something else.
+
+HONESTY NOTE: built the exact test requested (PAN 5287250568943496,
+discretionary set away from 14129745, save, then checked across every
+reload path: immediate, fresh-Activity reopen, same-slot rebind,
+add-card-and-switch-back). It passes with the fix - but it ALSO passed
+with the fix temporarily reverted (verified directly: reverted both
+changes, ran just this test, still green). So this hardening is correct
+and worth having, but I still have not produced a failing-then-passing
+test proving applyProfile()'s known-table reseed was the actual
+mechanism behind the original report. If it still reverts on the real
+device with this build, the cause is somewhere I haven't found yet -
+next time, get the exact physical sequence (Save button vs. just
+navigating away; whole-app reopen vs. switching card slots) before
+theorizing further.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
