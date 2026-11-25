@@ -166,11 +166,14 @@ not the real spec:
 - Track 2 (9F6B) discretionary is exactly 13 zeros then one F - not
   F-padding to a fixed width the way the reverted GPO-level field was.
   Built from pan()/expiry6()/service(), not a free-text box.
-- Track 1 (56) is the ONE thing not given literal bytes - built from the
-  same PAN/holder()/expiry()/service() fields as a best-effort ISO 7813
-  shape ("B" + PAN + "^" + name + "^" + YYMM + service, no %/? sentinels,
-  no LRC - EMV's own tag content, not magnetic framing). Flagged, not
-  silently guessed: confirm this against the paper before trusting it.
+- Track 1 (56) shape CONFIRMED: B+PAN+^+name+^+expiry+service+discretionary.
+  Discretionary reuses the SAME "discretionary" box track2() already
+  reads for tag 57 (digits only, same cleaning) - one shared box, not a
+  second Track-1-specific field. Empty by default, so the pinned test's
+  bytes were unchanged by adding it. New test
+  mastercardMsdRecord_track1DiscretionaryBox_isAppended proves the box
+  actually reaches the wire when set, not just that leaving it unset
+  doesn't regress.
 - 80 2A (CCC) now has a Mastercard-MSD-specific placeholder,
   mastercardMsdCcc(): 77 { 9F61 02 0000, 9F60 02 0000, 9F36 02 <ATC> }.
   The existing ccc() (real CVC3 crypto, 3DES under KDCVC3) is untouched -

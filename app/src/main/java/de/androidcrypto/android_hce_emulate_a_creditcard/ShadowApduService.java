@@ -2066,21 +2066,29 @@ public class ShadowApduService extends HostApduService {
 
     /**
      * Track 1 Data (56) for mastercardMsdRecord(): B + PAN + ^ + name + ^
-     * + expiry(YYMM) + service, the ISO/IEC 7813 field order minus the
-     * physical-stripe start/end sentinels (% and ?) and LRC - EMV's own
-     * tag 56 carries the logical content, not the magnetic framing.
+     * + expiry(YYMM) + service + discretionary - confirmed against the
+     * paper's own field order. Minus the physical-stripe start/end
+     * sentinels (% and ?) and LRC - EMV's own tag 56 carries the logical
+     * content, not the magnetic framing.
      *
-     * NOT GIVEN LITERAL BYTES THE WAY EVERY OTHER TAG IN THIS RECORD WAS -
-     * built from this profile's own PAN/holder/expiry/service fields
-     * (same ones track2()/syntheticRecord() already read) because nothing
-     * else in the spec named its content. holder() null (no name typed)
+     * Built from this profile's own PAN/holder/expiry/service fields (the
+     * same ones track2()/syntheticRecord() already read) and the shared
+     * "discretionary" box track2()'s own synthesis branch reads for tag 57
+     * - digits only, same cleaning rule. holder() null (no name typed)
      * serves an empty name field between the two carets, not an invented
-     * one.
+     * one; an empty "discretionary" box serves no trailing digits at all,
+     * same reasoning.
      */
     private byte[] mastercardMsdTrack1() {
         byte[] h = holder();
         String name = h == null ? "" : new String(h, java.nio.charset.StandardCharsets.ISO_8859_1);
-        String t = "B" + pan() + "^" + name + "^" + expiry6().substring(0, 4) + service();
+        // Discretionary is the same "discretionary" box track2()'s own
+        // synthesis branch reads for tag 57 - digits only, same cleaning
+        // rule, one box shared by both tracks rather than a second,
+        // Track-1-specific field. Empty by default, so the default/pinned
+        // shape is unchanged from before this field existed.
+        String disc = p("discretionary", "").replaceAll("[^0-9]", "");
+        String t = "B" + pan() + "^" + name + "^" + expiry6().substring(0, 4) + service() + disc;
         return t.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 

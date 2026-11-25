@@ -580,6 +580,30 @@ public class ShadowApduServicePpseTest {
     }
 
     /**
+     * mastercardMsdTrack1()'s discretionary field: the same shared
+     * "discretionary" box track2() reads for tag 57, confirmed against
+     * the paper's own B+PAN+^+name+^+expiry+service+discretionary order.
+     * Only 56 (track 1) changes length here - 9F6B (track 2) has its own
+     * fixed 13-zeros-plus-F discretionary, unrelated to this box.
+     */
+    @Test
+    public void mastercardMsdRecord_track1DiscretionaryBox_isAppended() {
+        setProfile("MASTERCARD");
+        setMsd(true);
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_discretionary", "789").commit();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        assertEquals("705E9F6C0200019F62060000000000389F630600000000F000"
+                        + "561D42343131313131313131313131313131315E5E333131323230313738399F6401049F650200389F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+                        + "9000",
+                send("00B2010C00"));
+    }
+
+    /**
      * mastercardMsdCcc() - a placeholder, not ccc()'s real CVC3 (that
      * method reads a different record shape, see its own doc): 77
      * { 9F61 02 0000, 9F60 02 0000, 9F36 02 <ATC> }. "atc" boxed to 0005
