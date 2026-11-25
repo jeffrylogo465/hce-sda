@@ -303,4 +303,43 @@ public class MainActivityCardLoadTest {
         assertTrue("GPO must answer with the saved AIP minus its ODA bits, not the profile default 1880: " + gpo,
                 gpo.contains("82021A00"));
     }
+
+    /**
+     * FIX: onSave() called syncFieldsFromTrack2() unconditionally, which
+     * reads expiry/service/discretionary back OUT of the track 2 box - and
+     * the track 2 box still held whatever was last pasted into it (here,
+     * discretionary 14129745), not the hand edit just typed directly into
+     * etDiscretionary. Only service had a capture-before/reassert-after
+     * fix; discretionary (and expiry) had the identical, unfixed bug - a
+     * typed discretionary value reverted to the old track2 tail the
+     * moment Save ran, before collect() ever persisted anything.
+     *
+     * Reproduces exactly: paste a track2 with a real discretionary tail,
+     * hand-edit the box to 13 zeros, Save, confirm the edit survived in
+     * memory, then rebuild the Activity from the same (unreset) prefs -
+     * simulating closing and reopening - and confirm the RELOAD shows the
+     * edit too, not the old track2 tail. bindCard() itself was never the
+     * problem (it always reads live prefs); onSave() was overwriting the
+     * box before the save ever reached prefs.
+     */
+    @Test
+    public void onSave_discretionaryEditSurvives_notRevertedByStaleTrack2() {
+        type(etTrack2, "5555555555554444=291220114129745");
+        assertEquals("14129745", etDiscretionary.getText().toString());
+
+        type(etDiscretionary, "0000000000000");
+
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+
+        assertEquals("the saved edit must not be reverted by syncFieldsFromTrack2()'s stale track2 read",
+                "0000000000000", etDiscretionary.getText().toString());
+
+        MainActivity reopened =
+                Robolectric.buildActivity(MainActivity.class).create().start().resume().get();
+        shadowOf(Looper.getMainLooper()).idle();
+        EditText reopenedDisc = reopened.findViewById(R.id.etDiscretionary);
+        assertEquals("reopening must reload what was actually saved, not the old track2 tail",
+                "0000000000000", reopenedDisc.getText().toString());
+    }
 }

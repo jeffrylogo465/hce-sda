@@ -240,6 +240,44 @@ terminal-driven. Leave as is, do not remove or extend it on this branch.
   Don't read anything into an amount difference between taps unless the
   log's own GPO PDOL bytes (9F02) are checked and differ meaningfully.
 
+# Side quest: MainActivity discretionary-edit revert bug (fixed)
+
+Reported: type 13 zeros into the discretionary box, Save, reopen - back
+to the old value (14129745). Traced:
+
+- WRITES: collect() - batches all boxes to SharedPreferences via
+  putIfChanged(), called at the end of onSave() (and many other places).
+- REPOPULATES: bindCard(i) - reads straight from prefs each time, not a
+  stale snapshot. Innocent.
+- THE BUG: onSave() calls syncFieldsFromTrack2() unconditionally, which
+  reads expiry/service/discretionary back OUT of etTrack2 (whatever was
+  last pasted into it) and overwrites those three boxes in memory -
+  BEFORE collect() ever persists anything. So the save "lands," it just
+  persists the wrong (reverted) value. service already had a fix
+  (capture the box before the sync, reassert it after); expiry and
+  discretionary had the identical bug, unfixed.
+
+Scope: NOT every field. PAN is deliberately the opposite convention -
+track2 always wins for PAN by design (boxDiff()/panFromTrack2(), "use
+the TRACK 2 value"), not a bug. Expiry had the same latent bug as
+discretionary, just not yet reported - fixed alongside it rather than
+left as a known parallel instance.
+
+Fix: onSave() now captures expiry/service/discretionary from their boxes
+before syncFieldsFromTrack2() runs, then reasserts all three together
+afterward (over the boxes and patched into track2 so the two stay
+consistent) - same idiom service already used, extended to the other two.
+
+Test: MainActivityCardLoadTest.onSave_discretionaryEditSurvives_
+notRevertedByStaleTrack2 - reproduces the exact repro (track2 with tail
+14129745, hand-edit to 13 zeros, Save, then rebuilds the Activity from
+the same unreset prefs to simulate reopening). Verified red without the
+fix (reverted it temporarily, ran just this test, confirmed
+ComparisonFailure), green with it restored.
+
+Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
+40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

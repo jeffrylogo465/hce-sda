@@ -2834,22 +2834,39 @@ public class MainActivity extends AppCompatActivity {
     private void onSave() {
         String diff = boxDiff(digits(t(etPan)));
 
-        // syncFieldsFromTrack2() below reads the service back out of the track 2
-        // box, which still holds the plastic's 201, so it undoes a deliberate
-        // edit before anything else runs. Take the field first, then re-assert it
-        // over the track after the sync, so the two agree and the pref keeps what
-        // the user set. The pin does not help here - the sync is not behind it.
+        // FIX: syncFieldsFromTrack2() below reads expiry, service AND
+        // discretionary back out of the track 2 box, which still holds
+        // whatever was last pasted into it - typically the plastic's own
+        // values - and silently undid a deliberate edit to ANY of the
+        // three before anything else ran. Only service had a fix (take
+        // the field first, re-assert it over the track after the sync);
+        // expiry and discretionary had the identical bug, unfixed - a
+        // typed discretionary value (reported: 13 zeros, saved, reopened
+        // as the old track's 14129745) reverted the same way service used
+        // to, for the same reason. All three are now captured before the
+        // sync and re-asserted together afterward, over both the boxes
+        // and the track, so a save persists what was actually typed.
+        //
+        // PAN is NOT captured or re-asserted here - track2 is deliberately
+        // authoritative for PAN (boxDiff()/panFromTrack2() below, "use the
+        // TRACK 2 value"), the opposite convention from these three.
+        String expWanted = t(etExpiry);
         String svcWanted = t(etService);
+        String discWanted = t(etDiscretionary);
 
         syncFieldsFromTrack2();
 
-        if (svcWanted.length() == 3) {
+        {
             String t2 = normaliseTrack2(t(etTrack2));
             int sep = t2.indexOf('D');
             if (sep > 0 && t2.length() >= sep + 8) {
+                String exp4 = expWanted.length() == 4 ? expWanted : t2.substring(sep + 1, sep + 5);
+                String svc3 = svcWanted.length() == 3 ? svcWanted : t2.substring(sep + 5, sep + 8);
                 binding = true;
-                etService.setText(svcWanted);
-                etTrack2.setText(t2.substring(0, sep + 5) + svcWanted + t2.substring(sep + 8));
+                if (expWanted.length() == 4) etExpiry.setText(expWanted);
+                if (svcWanted.length() == 3) etService.setText(svcWanted);
+                etDiscretionary.setText(discWanted);
+                etTrack2.setText(t2.substring(0, sep + 1) + exp4 + svc3 + discWanted);
                 binding = false;
             }
         }
