@@ -411,6 +411,47 @@ final class Emv {
     }
 
     /**
+     * CID ladder for the "a card that answers whatever the terminal does"
+     * Mastercard path - P1-driven, not forceTc/alwaysOnline-driven. The CID
+     * box is an override ONLY (hasForce), not a default; with it empty, P1
+     * decides outright. Never AAC except a requested AAC (P1 00).
+     *
+     *   1  requested AAC                      -> AAC
+     *   2  forced CID                         -> it (ARQC without a key downgrades to TC,
+     *                                              same reasoning as decideCid's own rung 6)
+     *   3  requested ARQC (P1 80)             -> ARQC if haveKey, else TC
+     *   4  escalate (a second GEN AC, again
+     *      requesting TC, after the first
+     *      one already answered TC)          -> ARQC if haveKey, else TC
+     *   5  overFloor (requested TC, P1 40,
+     *      but the card's own risk check -
+     *      9F02 above the floor limit - says
+     *      otherwise)                         -> ARQC if haveKey, else TC
+     *   6  otherwise (requested TC, under
+     *      the floor, no escalation)          -> TC
+     *
+     * Rungs 3/4/5 collapse to the same "want ARQC, downgrade if no key"
+     * shape on purpose - a terminal asking outright (P1 80), this card's
+     * own retry-abuse check, and this card's own amount check all reach
+     * the same place: something besides the plain "P1 40, first ask,
+     * under floor" case wants the issuer to see this one.
+     */
+    static byte decideCidP1Driven(int requested,
+                                   boolean haveKey,
+                                   boolean hasForce,
+                                   byte forcedCid,
+                                   boolean escalateToArqc,
+                                   boolean overFloor) {
+        if (requested == 0x00) return CID_AAC;
+        if (hasForce) {
+            return (forcedCid == CID_ARQC && !haveKey) ? CID_TC : forcedCid;
+        }
+        boolean wantArqc = requested == 0x80 || escalateToArqc || overFloor;
+        if (wantArqc) return haveKey ? CID_ARQC : CID_TC;
+        return CID_TC;
+    }
+
+    /**
      * Build an AFL from {sfi, record} pairs.
      *
      * Contiguous records collapse into one entry; a gap starts a new one. Get

@@ -658,4 +658,107 @@ public class ShadowApduServicePpseTest {
         assertNotNull("94 (AFL) missing - MSD=0 must not drop to the AFL-less MSD shape",
                 Emv.findTag(body, 0x94));
     }
+
+    // ---- mastercardGenac(): P1-driven CID, no mode or CID box to set ----
+
+    private void setMkac() {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_mkac", "0123456789ABCDEF0123456789ABCDEF").commit();
+    }
+
+    private static byte cidFrom(String genAcResponseHex) {
+        int at = genAcResponseHex.indexOf("9F2701");
+        return (byte) Integer.parseInt(genAcResponseHex.substring(at + 6, at + 8), 16);
+    }
+
+    // CDOL1 data: 9F02(6) 9F03(6) 9F1A(2) 95(5) 5F2A(2) 9A(3) 9C(1) 9F37(4) = 29 bytes.
+    private static final String CDOL1_UNDER_LIMIT =
+            "000000001000" + "000000000000" + "0840" + "0000000000" + "0840" + "261124" + "00" + "12345678";
+    private static final String CDOL1_OVER_LIMIT =
+            "000000010000" + "000000000000" + "0840" + "0000000000" + "0840" + "261124" + "00" + "12345678";
+
+    private static String genAc(int p1, String cdol1Data) {
+        return String.format("80AE%02X001D%s00", p1, cdol1Data);
+    }
+
+    /**
+     * mastercardGenac(): P1 40 (requesting TC) with 9F02 under
+     * floorLimitBcd()'s default ($50.00) stays TC - the plain case, no
+     * escalation, no risk override. No "cid" box set at all - P1 alone
+     * decides, matching the goal of no mode or CID box to set.
+     */
+    @Test
+    public void mastercardGenac_p1_40_underFloor_staysTc() {
+        setProfile("MASTERCARD");
+        setMkac();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        String resp = send(genAc(0x40, CDOL1_UNDER_LIMIT));
+        assertTrue(resp.endsWith("9000"));
+        assertEquals(Emv.CID_TC, cidFrom(resp));
+    }
+
+    /**
+     * mastercardGenac(): P1 40 with 9F02 OVER floorLimitBcd()'s default
+     * ($50.00, $100.00 sent here) becomes ARQC - card risk management,
+     * not the terminal's own ask, overriding an offline approval it
+     * would otherwise have gotten.
+     */
+    @Test
+    public void mastercardGenac_p1_40_overFloor_becomesArqc() {
+        setProfile("MASTERCARD");
+        setMkac();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        String resp = send(genAc(0x40, CDOL1_OVER_LIMIT));
+        assertTrue(resp.endsWith("9000"));
+        assertEquals(Emv.CID_ARQC, cidFrom(resp));
+    }
+
+    /**
+     * mastercardGenac(): a FIRST GEN AC (P1 40, under floor) answers TC;
+     * a SECOND GEN AC in the SAME tap, again asking P1 40, escalates to
+     * ARQC regardless of amount - a repeated offline ask is treated as
+     * suspicious, not honoured twice.
+     */
+    @Test
+    public void mastercardGenac_secondP1_40AfterATc_escalatesToArqc() {
+        setProfile("MASTERCARD");
+        setMkac();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        String first = send(genAc(0x40, CDOL1_UNDER_LIMIT));
+        assertEquals(Emv.CID_TC, cidFrom(first));
+
+        String second = send(genAc(0x40, CDOL1_UNDER_LIMIT));
+        assertTrue(second.endsWith("9000"));
+        assertEquals(Emv.CID_ARQC, cidFrom(second));
+    }
+
+    /**
+     * mastercardGenac(): P1 80 (requesting ARQC outright) is honoured -
+     * the terminal's own ask, independent of the floor or escalation.
+     */
+    @Test
+    public void mastercardGenac_p1_80_isHonoured() {
+        setProfile("MASTERCARD");
+        setMkac();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        String resp = send(genAc(0x80, CDOL1_UNDER_LIMIT));
+        assertTrue(resp.endsWith("9000"));
+        assertEquals(Emv.CID_ARQC, cidFrom(resp));
+    }
 }

@@ -220,6 +220,48 @@ public class EmvTest {
         assertEquals(ARQC, Emv.decideCid(true, 0x80, false, false, TC, false, false, false));
     }
 
+    // ------------------------------------------------------------ decideCidP1Driven
+
+    @Test
+    public void p1DrivenHonoursRequestedAac() {
+        assertEquals(AAC, Emv.decideCidP1Driven(0x00, true, false, TC, true, true));
+    }
+
+    @Test
+    public void p1DrivenForcedCidWinsOverP1() {
+        assertEquals(TC, Emv.decideCidP1Driven(0x80, true, true, TC, false, false));
+    }
+
+    @Test
+    public void p1DrivenDowngradesAForcedArqcWithoutAKey() {
+        assertEquals(TC, Emv.decideCidP1Driven(0x80, false, true, ARQC, false, false));
+    }
+
+    @Test
+    public void p1DrivenTcUnderFloorNoEscalation_staysTc() {
+        assertEquals(TC, Emv.decideCidP1Driven(0x40, true, false, TC, false, false));
+    }
+
+    @Test
+    public void p1DrivenTcOverFloor_becomesArqc() {
+        assertEquals(ARQC, Emv.decideCidP1Driven(0x40, true, false, TC, false, true));
+    }
+
+    @Test
+    public void p1DrivenSecondTcRequestAfterAFirstTc_escalatesToArqc() {
+        assertEquals(ARQC, Emv.decideCidP1Driven(0x40, true, false, TC, true, false));
+    }
+
+    @Test
+    public void p1DrivenRequestedArqc_isHonoured() {
+        assertEquals(ARQC, Emv.decideCidP1Driven(0x80, true, false, TC, false, false));
+    }
+
+    @Test
+    public void p1DrivenNeverAnswersArqcWithoutAKey_evenOverFloor() {
+        assertEquals(TC, Emv.decideCidP1Driven(0x40, false, false, TC, false, true));
+    }
+
     // ------------------------------------------------------------------------ afl
 
     /**

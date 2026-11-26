@@ -289,6 +289,17 @@ public class ShadowApduService extends HostApduService {
     private boolean cryptogramSent;
     private int scriptHits;
 
+    /**
+     * mastercardGenac()'s own per-tap state - how many GENERATE ACs this
+     * tap has seen, and what CID the first one answered. Reset with the
+     * rest of the tap in resetTransaction(). Needed for exactly one
+     * thing: "a second GEN AC arriving with P1 40 after a TC must return
+     * ARQC" - escalating a repeated offline ask within the same tap,
+     * which only makes sense counted per tap, not globally.
+     */
+    private int mcGenAcCount;
+    private byte mcFirstGenAcCid;
+
     private byte[] capturedIad;
     private String gpoCid = "";
 
@@ -1028,6 +1039,8 @@ public class ShadowApduService extends HostApduService {
         txnPdol = null;
         cryptogramSent = false;
         scriptHits = 0;
+        mcGenAcCount = 0;
+        mcFirstGenAcCid = 0;
         atcUsedByCcc = false;
         sawPpse = false;
         clearApplicationState();
@@ -2534,7 +2547,12 @@ public class ShadowApduService extends HostApduService {
             } else if (ins == 0xB2) {
                 out = readRecord(p1, p2);
             } else if (ins == 0xAE) {
-                out = genac(apdu);
+                // "A card that answers whatever the terminal does" - P1
+                // decides, the CID box is an override only. Mastercard
+                // specifically; other profiles keep genac()'s own
+                // forceTc/alwaysOnline-driven ladder.
+                out = "MASTERCARD".equals(activeProfile().name())
+                        ? mastercardGenac(apdu) : genac(apdu);
             } else if (ins == 0x2A) {
                 // Mastercard's own MSD record (mastercardMsdRecord()) is not
                 // the box-driven skeleton ccc() reads - see
@@ -3541,6 +3559,123 @@ public class ShadowApduService extends HostApduService {
         // The cryptogram is in this response, so the counter is spent here. This
         // is the EMV exit - ccc() is only reached in MSD, where the AC comes back
         // as a CVC3 in a 770A body instead.
+        commitAtc();
+        return cat(tlv(0x77, body), SW_OK);
+    }
+
+    /**
+     * The value bytes for tag `want` inside DOL-templated data, or null -
+     * not present in the template, or the data is too short for it. A DOL
+     * is tag+length pairs; the data the terminal actually sends is just
+     * the concatenated values in that same order, no tags of its own, so
+     * finding one field means walking the TEMPLATE while tracking an
+     * offset into the DATA - the same shape unOffset()/unLen()/udolLen()
+     * already walk for 9F6A inside a UDOL, applied here to 9F02 inside a
+     * CDOL1.
+     */
+    private static byte[] dolFieldValue(byte[] dolTemplate, byte[] data, int want) {
+        if (dolTemplate == null || data == null) return null;
+        int off = 0, i = 0;
+        while (i < dolTemplate.length) {
+            int[] q = new int[]{i};
+            int t = readTag(dolTemplate, q);
+            int l = readLen(dolTemplate, q);
+            if (q[0] + l > dolTemplate.length) break;
+            if (t == want) {
+                if (off + l > data.length) return null;
+                return Arrays.copyOfRange(data, off, off + l);
+            }
+            off += l;
+            i = q[0] + l;
+        }
+        return null;
+    }
+
+    /** n12-style BCD bytes (two decimal digits per byte) as a long - 9F02's own encoding. */
+    private static long bcdToLong(byte[] b) {
+        long v = 0;
+        for (byte x : b) {
+            v = v * 100 + ((x >> 4) & 0xF) * 10 + (x & 0xF);
+        }
+        return v;
+    }
+
+    /**
+     * Card risk management's own floor limit, as a long - the "floorlimit"
+     * box, BCD like 9F02 itself, or the default: 000000005000 ($50.00).
+     * Malformed input (odd length, non-hex) falls back to the default
+     * rather than throwing - a risk check that cannot run is a decision
+     * this card should not silently skip.
+     */
+    private long floorLimitBcd() {
+        String v = p("floorlimit", "").replaceAll("[^0-9A-Fa-f]", "");
+        if (v.length() != 12) return bcdToLong(hex("000000005000"));
+        try {
+            return bcdToLong(hex(v));
+        } catch (Exception ex) {
+            return bcdToLong(hex("000000005000"));
+        }
+    }
+
+    /**
+     * GENERATE AC for "a card that answers whatever the terminal does" -
+     * Mastercard only (see the dispatch site). The response shape is
+     * identical to genac()'s own (9F10?/9F26/9F27/9F36 in a 77), only the
+     * CID ladder differs: Emv.decideCidP1Driven(), not Emv.decideCid() -
+     * P1-driven, the CID box an override only, card risk management
+     * (9F02 against floorLimitBcd()) and the repeated-TC-escalation rule
+     * instead of forceTc/alwaysOnline. See that method's own doc for the
+     * ladder.
+     *
+     * mcGenAcCount/mcFirstGenAcCid are this tap's own state - escalation
+     * only makes sense counted per tap, reset with the rest of it in
+     * resetTransaction().
+     */
+    private byte[] mastercardGenac(byte[] apdu) {
+        int p1 = apdu[2] & 0xFF;
+        int requested = p1 & 0xC0;
+
+        String forced = p("cid", "").replaceAll("[^0-9A-Fa-f]", "");
+        boolean hasForce = forced.length() == 2;
+        byte forcedCid = hasForce ? (byte) Integer.parseInt(forced, 16) : 0;
+
+        mcGenAcCount++;
+        boolean escalate = mcGenAcCount > 1 && requested == 0x40 && mcFirstGenAcCid == Emv.CID_TC;
+
+        byte[] cdolData = dataOf(apdu);
+        byte[] amountBytes = dolFieldValue(hex(dol("cdol1", CDOL1)), cdolData, 0x9F02);
+        boolean overFloor = requested == 0x40 && !escalate
+                && amountBytes != null && bcdToLong(amountBytes) > floorLimitBcd();
+
+        byte cid = Emv.decideCidP1Driven(requested, haveKey(), hasForce, forcedCid, escalate, overFloor);
+        if (mcGenAcCount == 1) mcFirstGenAcCid = cid;
+
+        lastCid = String.format("%02X", cid);
+        String atc = txnAtc();
+
+        byte[] ac = computeAc(atc, cdolData);
+        cryptogramSent = true;
+
+        String iad = iadHex();
+
+        tap("-- mc genac requested=" + String.format("%02X", requested)
+                + " cid=" + lastCid
+                + (hasForce ? " (forced from the CID box"
+                        + (forcedCid != cid ? ", downgraded" : "") + ")" : "")
+                + (escalate ? " (escalated: repeat TC ask)" : "")
+                + (overFloor ? " (over floor " + floorLimitBcd() + ")" : "")
+                + " atc=" + atc + " arqc=" + bytesToHex(ac));
+
+        byte[] body = new byte[0];
+        if (!iad.isEmpty()) body = cat(body, tlv(0x9F10, hex(iad)));
+        body = cat(body,
+                tlv(0x9F26, ac),
+                tlv(0x9F27, new byte[]{cid}),
+                tlv(0x9F36, hex(atc)));
+
+        tap("-- mc genac body=" + body.length + "B iad=" + hex(iad).length
+                + "B arqc=" + ac.length + "B");
+
         commitAtc();
         return cat(tlv(0x77, body), SW_OK);
     }

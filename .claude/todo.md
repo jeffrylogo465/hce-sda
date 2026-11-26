@@ -383,6 +383,64 @@ and armMsdCard()'s ATC seed - neither reaches mastercardMsdTrack2().
 Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
 40 tasks executed fresh.
 
+# "A card that answers whatever the terminal does" - items 2/3/5 done, 1/4 blocked
+
+Five-item request referenced "dual mode as above (MSD=2)" - "above"
+content not visible in this session's context (likely from an earlier,
+now-summarized part of the conversation, or external notes). Items 2, 3
+and 5 are fully self-contained (genac()'s own CID ladder) and do not
+depend on knowing what "MSD=2" structurally means - implemented and
+tested. Items 1 and 4 (the SFI/GPO/AFL unification itself, and the
+dump-paste defaults that set "MSD 2") are NOT implemented - guessing at
+a major architectural restructuring (merging the MSD and EMV SFI
+layouts into one) without the referenced spec risks diverging from
+whatever was actually decided. Asked the user for it rather than guess.
+
+Done (Emv.java + ShadowApduService.java):
+- Emv.decideCidP1Driven(requested, haveKey, hasForce, forcedCid,
+  escalateToArqc, overFloor): P1 00->AAC always; CID box (hasForce)
+  wins when set, downgrading an unbacked ARQC to TC same as
+  decideCid()'s own rung 6; otherwise P1 80->ARQC, escalate->ARQC,
+  overFloor->ARQC (all downgrading to TC without a key), else TC.
+  decideCid() itself is untouched - this is a NEW, separate ladder,
+  not a replacement, so every other profile's genac() keeps its own
+  forceTc/alwaysOnline-driven behaviour unchanged.
+- ShadowApduService.mastercardGenac(): same response shape as genac()'s
+  own (9F10?/9F26/9F27/9F36 in a 77), the new ladder instead. Wired at
+  the ins==0xAE dispatch site, gated on
+  "MASTERCARD".equals(activeProfile().name()) only - not on isMsd() -
+  since GEN AC only happens on the EMV path. mcGenAcCount/
+  mcFirstGenAcCid are new per-tap fields (reset in resetTransaction())
+  tracking whether a second GEN AC in the same tap asked P1 40 again
+  after the first one answered TC - the escalation rule.
+  dolFieldValue()/bcdToLong() are new generic helpers (walk a DOL
+  template against raw CDOL data to find one tag's value, then read it
+  as BCD) - used to pull 9F02 out of the GEN AC's own data and compare
+  against floorLimitBcd() (new "floorlimit" box, BCD like 9F02 itself,
+  default 000000005000 = $50.00).
+
+Tests: EmvTest has 8 new decideCidP1Driven cases (pure function, no
+Android). ShadowApduServicePpseTest has 4 new mastercardGenac
+integration tests matching item 5 exactly - P1 40 under floor stays TC,
+P1 40 over floor becomes ARQC, a second P1 40 after a TC escalates to
+ARQC, P1 80 is honoured. All green on the first run, no corrections
+needed, including the full build gate.
+
+Not done, blocked on the missing "above" context:
+- Item 1 (dual mode / MSD=2): what the GPO/AFL/SFI layout actually
+  looks like when "no mode box" still answers correctly to whichever
+  protocol the terminal runs. My own best-effort reading of the real
+  Mastercard M/Chip dump this session already has (mastercard.json)
+  suggests SFI1=MSD-shaped/not-ODA-claimed, SFI2=EMV
+  ordinary/ODA-claimed, SFI3/4=key chain/not-ODA-claimed, one AIP/AFL
+  for both - a RENUMBERING of what this session already built
+  (currently SFI1=EMV ordinary, SFI2=key chain, separate MSD-only
+  AIP/AFL/record entirely) - but this is a guess, not confirmed, and
+  touches everything the ODA cell and the MSD rebuild both already
+  pinned byte-exact.
+- Item 4 (unpinned-dump-paste defaults: MSD 2, clear CID box, ATC
+  floor from DD) depends on item 1 existing first.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
