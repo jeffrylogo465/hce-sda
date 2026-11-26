@@ -520,6 +520,11 @@ public class ShadowApduServicePpseTest {
                 .putString("card0_msd", on ? "1" : "0").commit();
     }
 
+    private void setMsdDual() {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_msd", "2").commit();
+    }
+
     private void setAtc(String hex4) {
         Prefs.get(RuntimeEnvironment.getApplication()).edit()
                 .putString("card0_atc", hex4).commit();
@@ -760,5 +765,86 @@ public class ShadowApduServicePpseTest {
         String resp = send(genAc(0x80, CDOL1_UNDER_LIMIT));
         assertTrue(resp.endsWith("9000"));
         assertEquals(Emv.CID_ARQC, cidFrom(resp));
+    }
+
+    // ---- Dual mode (mcMsdMode()==2): one GPO, two records, routed by SFI ----
+
+    /**
+     * mastercardDualGpo(): format 2, AIP 58 C0 (both AIP_MC's 0x80 and
+     * AIP_MC_MSD's 0x40 claimed together), AFL 08010100 10010101 - SFI 1
+     * rec 1 not ODA-claimed, SFI 2 rec 1 ODA-claimed.
+     */
+    @Test
+    public void mastercardDualGpo_isFormat2WithAipC0AndTwoEntryAfl_byteExact() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        assertEquals("770E820258C0940808010100100101019000",
+                send("80A8000002830000"));
+    }
+
+    /**
+     * Dual mode's SFI 1 rec 1 is mastercardMsdRecord() unchanged - the
+     * SAME bytes mastercardMsdRecord_sfi1Rec1_byteExact() already pins
+     * for single-mode MSD (mcMsdMode()==1). Routed by SFI, not rebuilt.
+     */
+    @Test
+    public void mastercardDualSfi1Record_isTheUnchangedMsdRecord_byteExact() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        assertEquals("705B9F6C0200019F62060000000000009F630600000000F000"
+                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+                        + "9000",
+                send("00B2010C00"));
+    }
+
+    /**
+     * Dual mode's SFI 2 rec 1 is mastercardDualEmvRecord() - 70 { 57,
+     * 5F24, 8C, 8D, 8E, 9F0D, 9F0E, 9F0F, 9F4A 82 } - the shorter EMV
+     * record, NOT syntheticRecord()'s own, pinned byte-exact.
+     */
+    @Test
+    public void mastercardDualSfi2Record_isTheShorterEmvRecord_byteExact() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        assertEquals("706F570C4111111111111111D31122015F24033112018C159F02069F03069F1A0295055F2A029A039C019F37048D189F02069F03069F1A0295055F2A029A039C019F37049F34038E0C00000000000000005E071F039F0D0500000000009F0E0500000000009F0F0500000000009F4A0182"
+                        + "9000",
+                send("00B2011400"));
+    }
+
+    /**
+     * The AFL routes by SFI, never by the mode box past the GPO: SFI 1
+     * and SFI 2 each come back shaped for their own record, read in
+     * either order, within the same dual-mode tap.
+     */
+    @Test
+    public void mastercardDual_aflRoutesBySfi_notByTheModeBoxPastGpo() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+        send("80A8000002830000");
+
+        String sfi2 = send("00B2011400");
+        String sfi1 = send("00B2010C00");
+
+        assertTrue("SFI 2 must be the EMV record (57/8C/8D/8E/9F4A), not the MSD one",
+                sfi2.contains("9F4A0182") && !sfi2.contains("9F6C"));
+        assertTrue("SFI 1 must be the MSD record (9F6C/9F6B), not the EMV one",
+                sfi1.contains("9F6C0200") && sfi1.contains("9F6B") && !sfi1.contains("8C159F02"));
     }
 }

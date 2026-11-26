@@ -1105,6 +1105,25 @@ public class MainActivity extends AppCompatActivity {
         }
 
         boolean armed = armFromFields();
+
+        // "A card that answers whatever the terminal does, with no mode
+        // or CID box to set" - an UNPINNED dump paste overrides whatever
+        // armFromFields() -> armMsdCard() just wrote for MSD (that
+        // method's own etMsd.setText(msdDefault(net)), unconditional
+        // whenever unpinned) with dual mode (2), and clears the CID box
+        // applyProfile() set above, so GEN AC's own P1 decides instead
+        // of a typed-in override (see Emv.decideCidP1Driven()/
+        // mastercardGenac()). Placed AFTER armFromFields(), not after
+        // applyProfile() above - armMsdCard() runs later in this same
+        // method and would otherwise stomp an earlier write. A PINNED
+        // card keeps whatever the user chose.
+        if (!profilePinned()) {
+            binding = true;
+            etMsd.setText("2");
+            etCid.setText("");
+            binding = false;
+        }
+
         dumping = false;
 
         if (!armed) return;

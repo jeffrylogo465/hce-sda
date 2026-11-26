@@ -383,18 +383,54 @@ and armMsdCard()'s ATC seed - neither reaches mastercardMsdTrack2().
 Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
 40 tasks executed fresh.
 
-# "A card that answers whatever the terminal does" - items 2/3/5 done, 1/4 blocked
+# "A card that answers whatever the terminal does" - all 5 items done
 
-Five-item request referenced "dual mode as above (MSD=2)" - "above"
-content not visible in this session's context (likely from an earlier,
-now-summarized part of the conversation, or external notes). Items 2, 3
-and 5 are fully self-contained (genac()'s own CID ladder) and do not
-depend on knowing what "MSD=2" structurally means - implemented and
-tested. Items 1 and 4 (the SFI/GPO/AFL unification itself, and the
-dump-paste defaults that set "MSD 2") are NOT implemented - guessing at
-a major architectural restructuring (merging the MSD and EMV SFI
-layouts into one) without the referenced spec risks diverging from
-whatever was actually decided. Asked the user for it rather than guess.
+Five-item request originally referenced "dual mode as above (MSD=2)"
+with "above" content not visible in this session's context; asked the
+user for it rather than guess at a major SFI/GPO/AFL restructuring.
+They supplied the exact spec (one GPO, AIP 58C0, AFL
+08010100/10010101, SFI1=mastercardMsdRecord() unchanged, SFI2 a NEW,
+shorter EMV record, routed by SFI not by the mode box). All 5 items
+now implemented and tested.
+
+Items 1/4 (dual mode, mcMsdMode()==2):
+- AIP_MC_DUAL="58C0" (both AIP_MC's 0x80 EMV-mode bit and AIP_MC_MSD's
+  0x40 mag-stripe bit, claimed together).
+- mcMsdMode(): Mastercard's own 0/1/2 reader of the "msd" box - NOT
+  isMsd(), the plain boolean every other profile's own msd-vs-emv
+  split still reads unchanged. "2" means nothing to isMsd() itself
+  (falls through to the profile's own default), so this is additive,
+  not a replacement.
+- mastercardDualGpo(): the dual AIP/AFL, byte-exact.
+- mastercardDualEmvRecord(): SFI2's new, shorter EMV record - 70{57,
+  5F24, 8C, 8D, 8E, 9F0D, 9F0E, 9F0F, 9F4A 82} - deliberately smaller
+  than syntheticRecord() (no 5A/5F34/5F20/9F42/9F07/9F08/5F28):
+  SFI1's own 9F6B already carries PAN+exp+svc+disc, so SFI2 does not
+  repeat it. syntheticRecord() itself is untouched - mode 0 still
+  serves exactly what it always has.
+- readRecord()'s Mastercard branch now keyed off mcMsdMode(), not
+  isMsd(): mode 2 routes SFI1->mastercardMsdRecord() (unchanged),
+  SFI2->mastercardDualEmvRecord(); mode 1 unchanged (SFI1 only); mode
+  0 falls through to the generic path unchanged (syntheticRecord()).
+- Dispatch: 80 2A gated on Mastercard && mcMsdMode()!=0 (msd or dual);
+  80 AE gated on Mastercard && mcMsdMode()!=1 (emv or dual) - a kernel
+  only ever sends its own one, so both being live in dual is safe.
+- MainActivity.applyDump(): an unpinned dump paste sets etMsd="2" and
+  clears etCid - placed AFTER armFromFields() runs, not right after
+  applyProfile(): armMsdCard() (called inside armFromFields())
+  unconditionally writes etMsd.setText(msdDefault(net)) whenever
+  unpinned, which was silently stomping an earlier override - caught
+  by the test (expected "2", got "0") before being caught any other
+  way. A pinned card is unaffected, same guard applyProfile()'s own
+  shape-guarded fields already use.
+
+Tests: ShadowApduServicePpseTest has 4 new tests - dual GPO byte-exact,
+SFI1 byte-exact (same bytes as the single-mode MSD test, proving it is
+unchanged), SFI2 byte-exact, and an AFL-routing check reading both SFIs
+in one tap. MainActivityCardLoadTest has 2 new tests - unpinned sets
+2/clears CID, pinned keeps its own values. Full existing suite reran
+unchanged (mode 0 and mode 1's own tests) to confirm no regression
+before adding anything new, per item 7's own requirement.
 
 Done (Emv.java + ShadowApduService.java):
 - Emv.decideCidP1Driven(requested, haveKey, hasForce, forcedCid,
@@ -426,20 +462,16 @@ P1 40 over floor becomes ARQC, a second P1 40 after a TC escalates to
 ARQC, P1 80 is honoured. All green on the first run, no corrections
 needed, including the full build gate.
 
-Not done, blocked on the missing "above" context:
-- Item 1 (dual mode / MSD=2): what the GPO/AFL/SFI layout actually
-  looks like when "no mode box" still answers correctly to whichever
-  protocol the terminal runs. My own best-effort reading of the real
-  Mastercard M/Chip dump this session already has (mastercard.json)
-  suggests SFI1=MSD-shaped/not-ODA-claimed, SFI2=EMV
-  ordinary/ODA-claimed, SFI3/4=key chain/not-ODA-claimed, one AIP/AFL
-  for both - a RENUMBERING of what this session already built
-  (currently SFI1=EMV ordinary, SFI2=key chain, separate MSD-only
-  AIP/AFL/record entirely) - but this is a guess, not confirmed, and
-  touches everything the ODA cell and the MSD rebuild both already
-  pinned byte-exact.
-- Item 4 (unpinned-dump-paste defaults: MSD 2, clear CID box, ATC
-  floor from DD) depends on item 1 existing first.
+Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
+40 tasks executed fresh.
+
+Not done / not asked for: the register run itself (a real tap in dual
+mode against a live terminal) - user installs/taps, I build and read
+logs. Also not done: 9F6B's own discretionary content in
+mastercardDualEmvRecord()'s 57 is track2() (the box-driven field,
+possibly empty->synthesized default) - NOT mastercardMsdTrack2()'s
+fixed 0000000000000F shape, which belongs to SFI1 only and was never
+asked to apply to SFI2's 57.
 
 # Scope
 

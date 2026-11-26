@@ -805,6 +805,24 @@ public class ShadowApduService extends HostApduService {
     }
 
     /**
+     * Mastercard's own three-state mode: 0 EMV, 1 MSD, 2 dual - "a card
+     * that answers whatever the terminal does," routed by SFI in the
+     * dual GPO's AFL, never by this box past the GPO. NOT isMsd(): that
+     * stays the plain boolean every other profile's own generic msd-vs-
+     * emv split still reads, unchanged - "2" means nothing to isMsd()
+     * (none of its string checks match it, so it falls through to the
+     * profile's own default, harmless for a non-Mastercard card). Only
+     * the Mastercard-specific dispatch sites added for this card read
+     * this method at all.
+     */
+    private int mcMsdMode() {
+        String v = p("msd", "0").trim();
+        if (v.equals("2")) return 2;
+        if (v.equals("1") || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")) return 1;
+        return 0;
+    }
+
+    /**
      * Whether syntheticRecord()'s 8E is forced to CVMLIST, ignoring
      * whatever the "cvmlist" box holds - same box-overriding-the-default
      * concern cvmBox() exists to catch (a typed value that passes shape
@@ -2038,6 +2056,16 @@ public class ShadowApduService extends HostApduService {
     private static final String AIP_MC_MSD = "5840";
 
     /**
+     * Mastercard AIP for dual mode (mcMsdMode()==2): 58 C0 - byte 1
+     * unchanged (CV+TRM+SDA), byte 2 both capability bits AIP_MC
+     * (0x80, EMV mode) and AIP_MC_MSD (0x40, mag-stripe) claim
+     * separately, claimed together - 0x80 | 0x40 = 0xC0. A third
+     * SEPARATE constant, same reasoning as AIP_MC_MSD's own doc: the
+     * three cells (ODA, single-mode MSD, dual) stay decoupled.
+     */
+    private static final String AIP_MC_DUAL = "58C0";
+
+    /**
      * The Mastercard MSD GPO: format 2, to the paper's own shape -
      * 77 0A { 82 02 5840, 94 04 08 01 01 00 }. REBUILT from the first
      * attempt (format 1, AIP + 9F6B + 9F6C inline, no AFL at all): that
@@ -2056,6 +2084,33 @@ public class ShadowApduService extends HostApduService {
         return tlv(0x77, cat(
                 tlv(0x82, aip),
                 tlv(0x94, hex("08010100"))));
+    }
+
+    /**
+     * Dual mode (mcMsdMode()==2): one GPO, AIP 58 C0 - both capability
+     * bits the single-mode AIPs claim separately (byte 2 0x80 EMV mode
+     * in AIP_MC, 0x40 mag-stripe in AIP_MC_MSD), claimed together. AFL
+     * is two entries: SFI 1 rec 1, NOT claimed for offline data
+     * authentication (mastercardMsdRecord(), unchanged from the
+     * single-mode MSD cell); SFI 2 rec 1, claimed (mastercardDualEmvRecord(),
+     * a NEW, separate method - not syntheticRecord(), which stays exactly
+     * what mcMsdMode()==0 serves).
+     *
+     * "A card that answers whatever the terminal does, with no mode or
+     * CID box to set" is the whole point: the SAME GPO goes out
+     * regardless of which kernel is on the other end, and readRecord()
+     * routes by the SFI the terminal itself asks for, not by this box -
+     * an MSD-only reader asks for SFI 1 and stops; an EMV-capable one
+     * reads both, or just SFI 2, depending on what it actually wants.
+     */
+    private byte[] mastercardDualGpo() {
+        byte[] aip = hex(AIP_MC_DUAL);
+
+        tap("-- dual: mastercard gpo aip=" + bytesToHex(aip) + " afl=0801010010010101");
+
+        return tlv(0x77, cat(
+                tlv(0x82, aip),
+                tlv(0x94, hex("0801010010010101"))));
     }
 
     /**
@@ -2173,6 +2228,42 @@ public class ShadowApduService extends HostApduService {
                 tlv(0x9F66, hex("1E00")),
                 tlv(0x9F6B, track2),
                 tlv(0x9F67, hex("04"))));
+    }
+
+    /**
+     * Dual mode's SFI 2 rec 1 - the ODA-flagged EMV record, NOT
+     * syntheticRecord() and not reusing it: 70 { 57, 5F24, 8C, 8D, 8E,
+     * 9F0D, 9F0E, 9F0F, 9F4A 82 }, that exact tag order, nothing else.
+     * syntheticRecord() itself stays exactly what mcMsdMode()==0 serves
+     * at SFI 1 - unchanged, not touched by this method at all.
+     *
+     * NO PAN (5A), NO PSN (5F34), NO HOLDER (5F20), NO 9F42/9F07/9F08/5F28 -
+     * this record is deliberately smaller than syntheticRecord()'s own.
+     * PAN already reaches an EMV kernel reading both AFL entries via SFI
+     * 1's own 9F6B (track2-equivalent, PAN+D+exp+svc+disc) - this record
+     * does not need to repeat it. 57 (track 2) here is track2()'s own
+     * value, the SAME field syntheticRecord() itself reads for its own
+     * 57 - not mastercardMsdTrack2()'s fixed shape, which belongs to SFI
+     * 1 only.
+     *
+     * 8E honours isBypass() the same way syntheticRecord()'s own 8E
+     * does - one CVM-list rule, not two that could drift.
+     */
+    private byte[] mastercardDualEmvRecord() {
+        byte[] t2 = track2();
+
+        tap("-- dual: mastercard sfi2 record track2=" + bytesToHex(t2));
+
+        return tlv(0x70, cat(
+                tlv(0x57, t2),
+                tlv(0x5F24, hex(expiry6())),
+                tlv(0x8C, hex(dol("cdol1", CDOL1))),
+                tlv(0x8D, hex(dol("cdol2", CDOL2))),
+                tlv(0x8E, hex(isBypass() ? CVMLIST : cvmBox())),
+                tlv(0x9F0D, hex("0000000000")),
+                tlv(0x9F0E, hex("0000000000")),
+                tlv(0x9F0F, hex("0000000000")),
+                tlv(0x9F4A, hex("82"))));
     }
 
     /**
@@ -2447,18 +2538,39 @@ public class ShadowApduService extends HostApduService {
                     boolean mastercardShape = readTag(body, new int[]{0}) == 0x77
                             && findTag(body, 0x9F26) == null;
 
-                    if (mastercardShape && isMsd()) {
-                        // Mastercard's own dedicated MSD GPO: format 2, AIP
-                        // 5840, a plain one-entry AFL pointing at
-                        // mastercardMsdRecord() - not the generic msd-vs-emv
-                        // split below. msdAip() only masks AIP bits in
-                        // whatever framing the canned line already has, and
-                        // Mastercard's canned line is the EMV-mode 77/82/94
-                        // template with the EMV AFL still attached - masking
-                        // its AIP bits left that AFL in place, pointing at
-                        // the wrong record. See mastercardMsdGpo()'s own doc.
-                        body = mastercardMsdGpo();
-                        tap("-- script: MSD GPO built from the card, not replayed");
+                    if (mastercardShape) {
+                        // Mastercard's own three-way GPO split, keyed off
+                        // mcMsdMode() (0/1/2) - NOT isMsd(), the generic
+                        // boolean the else-branch below still uses for
+                        // every other profile. msdAip() (that branch) only
+                        // masks AIP bits in whatever framing the canned
+                        // line already has, and Mastercard's canned line
+                        // is the EMV-mode 77/82/94 template with the EMV
+                        // AFL still attached - masking its AIP bits left
+                        // that AFL in place, pointing at the wrong record,
+                        // which is why Mastercard never takes that branch
+                        // at all, in any of its three modes.
+                        int mode = mcMsdMode();
+                        if (mode == 2) {
+                            // "A card that answers whatever the terminal
+                            // does" - one GPO, routed by SFI afterward, not
+                            // by this box. See mastercardDualGpo()'s own doc.
+                            body = mastercardDualGpo();
+                            tap("-- script: dual GPO built from the card, not replayed");
+                        } else if (mode == 1) {
+                            // See mastercardMsdGpo()'s own doc.
+                            body = mastercardMsdGpo();
+                            tap("-- script: MSD GPO built from the card, not replayed");
+                        } else {
+                            // Build the response from the card instead of replaying the
+                            // canned line - see mastercardGpoFromCard()'s own doc
+                            // and term-new6.log for why the canned AIP alone
+                            // stalled a real terminal before READ RECORD.
+                            body = mastercardGpoFromCard();
+                            tap("-- script: GPO built from the card, not replayed | aip="
+                                    + bytesToHex(findTag(body, 0x82))
+                                    + " afl=" + bytesToHex(findTag(body, 0x94)));
+                        }
                     } else if (isMsd()) {
                         // The script path returns before gpo() runs, so the MSD mask
                         // inside gpo() never applied while a script was armed - and
@@ -2467,15 +2579,6 @@ public class ShadowApduService extends HostApduService {
                         tap("-- msd: gpo format 1 aip=" + bytesToHex(capturedAip(body))
                                 + " afl=" + bytesToHex(Arrays.copyOfRange(body, 2, body.length))
                                 + " payload=" + body.length + "B " + bytesToHex(body));
-                    } else if (mastercardShape) {
-                        // Build the response from the card instead of replaying the
-                        // canned line - see mastercardGpoFromCard()'s own doc
-                        // and term-new6.log for why the canned AIP alone
-                        // stalled a real terminal before READ RECORD.
-                        body = mastercardGpoFromCard();
-                        tap("-- script: GPO built from the card, not replayed | aip="
-                                + bytesToHex(findTag(body, 0x82))
-                                + " afl=" + bytesToHex(findTag(body, 0x94)));
                     }
                     byte[] sa = capturedAip(body);
                     if (sa != null && sa.length >= 2) {
@@ -2548,17 +2651,22 @@ public class ShadowApduService extends HostApduService {
                 out = readRecord(p1, p2);
             } else if (ins == 0xAE) {
                 // "A card that answers whatever the terminal does" - P1
-                // decides, the CID box is an override only. Mastercard
-                // specifically; other profiles keep genac()'s own
-                // forceTc/alwaysOnline-driven ladder.
-                out = "MASTERCARD".equals(activeProfile().name())
-                        ? mastercardGenac(apdu) : genac(apdu);
+                // decides, the CID box is an override only. Mastercard,
+                // gated on mode EMV (0) or dual (2) - mode MSD (1) has
+                // no GEN AC kernel behaviour to answer, so it falls to
+                // genac()'s own ladder same as every other profile, a
+                // branch no real MSD-only terminal will ever reach.
+                boolean mc = "MASTERCARD".equals(activeProfile().name());
+                out = (mc && mcMsdMode() != 1) ? mastercardGenac(apdu) : genac(apdu);
             } else if (ins == 0x2A) {
                 // Mastercard's own MSD record (mastercardMsdRecord()) is not
                 // the box-driven skeleton ccc() reads - see
-                // mastercardMsdCcc()'s own doc.
-                out = (isMsd() && "MASTERCARD".equals(activeProfile().name()))
-                        ? mastercardMsdCcc() : ccc(apdu);
+                // mastercardMsdCcc()'s own doc. Gated on mode MSD (1) or
+                // dual (2), mcMsdMode() - not isMsd(), so dual mode's own
+                // CCC answer (a real MSD-behaving terminal can still tap
+                // in dual mode) is included, not just the single-mode MSD case.
+                boolean mcCcc = "MASTERCARD".equals(activeProfile().name());
+                out = (mcCcc && mcMsdMode() != 0) ? mastercardMsdCcc() : ccc(apdu);
             } else if (ins == 0xCA) {
                 out = getData(apdu);
             } else if (ins == 0x20) {
@@ -3258,16 +3366,32 @@ public class ShadowApduService extends HostApduService {
         int sfi = (p2 & 0xFF) >> 3;
         int rec = p1 & 0xFF;
 
-        // Mastercard's own MSD record, the one mastercardMsdGpo()'s AFL
-        // points to - checked FIRST, ahead of the generic box-driven MSD
-        // skeleton below: without this, an untyped "msdrec" box (the
-        // normal, untouched state for this profile) fell through all the
-        // way to syntheticRecord(), the EMV record, serving CDOL/CVM data
-        // to a terminal that asked for the MSD track.
-        if (isMsd() && sfi == 1 && rec == 1
-                && "MASTERCARD".equals(activeProfile().name())) {
-            tap("-- rec sfi=1 rec=1 (mastercard msd)");
-            return cat(mastercardMsdRecord(), SW_OK);
+        // Mastercard's own MSD/dual records - checked FIRST, ahead of
+        // the generic box-driven MSD skeleton below: without this, an
+        // untyped "msdrec" box (the normal, untouched state for this
+        // profile) fell through all the way to syntheticRecord(), the
+        // EMV record, serving CDOL/CVM data to a terminal that asked
+        // for the MSD track. Keyed off mcMsdMode(), not isMsd() - mode
+        // dual (2) serves SFI 1 and SFI 2 from two DIFFERENT methods at
+        // the SAME SFI number mode MSD (1) and mode EMV (0) would each
+        // serve alone, so this has to know the mode, not just "is this
+        // MSD-ish." Routed by the SFI the terminal itself asked for,
+        // never by this box past the GPO - see mastercardDualGpo()'s doc.
+        if ("MASTERCARD".equals(activeProfile().name())) {
+            int mcMode = mcMsdMode();
+            if (mcMode == 2) {
+                if (sfi == 1 && rec == 1) {
+                    tap("-- rec sfi=1 rec=1 (mastercard dual: msd)");
+                    return cat(mastercardMsdRecord(), SW_OK);
+                }
+                if (sfi == 2 && rec == 1) {
+                    tap("-- rec sfi=2 rec=1 (mastercard dual: emv)");
+                    return cat(mastercardDualEmvRecord(), SW_OK);
+                }
+            } else if (mcMode == 1 && sfi == 1 && rec == 1) {
+                tap("-- rec sfi=1 rec=1 (mastercard msd)");
+                return cat(mastercardMsdRecord(), SW_OK);
+            }
         }
 
         if (isMsd()) {

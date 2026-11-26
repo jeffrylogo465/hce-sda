@@ -29,7 +29,7 @@ public class MainActivityCardLoadTest {
 
     private MainActivity activity;
     private EditText etTrack2, etPan, etExpiry, etService, etDiscretionary,
-            etAid, etAip, etAfl, etCid, etAtc;
+            etAid, etAip, etAfl, etCid, etAtc, etMsd;
 
     @Before
     public void setUp() {
@@ -47,6 +47,7 @@ public class MainActivityCardLoadTest {
         etAfl = activity.findViewById(R.id.etAfl);
         etCid = activity.findViewById(R.id.etCid);
         etAtc = activity.findViewById(R.id.etAtc);
+        etMsd = activity.findViewById(R.id.etMsd);
     }
 
     /**
@@ -440,5 +441,38 @@ public class MainActivityCardLoadTest {
 
         assertEquals("floored seed must not fall below what the service already committed",
                 "9800", etAtc.getText().toString());
+    }
+
+    /**
+     * "A card that answers whatever the terminal does, with no mode or
+     * CID box to set" - an UNPINNED dump paste overrides applyProfile()'s
+     * own msdDefault(net) with dual mode (2) and clears the CID box, so
+     * mastercardGenac()'s P1-driven ladder decides instead of a typed-in
+     * override. See MainActivity.applyDump()'s own doc for this block.
+     */
+    @Test
+    public void applyDump_unpinnedCard_setsDualModeAndClearsCid() {
+        type(etTrack2, "5555555555554444=29122015678");
+
+        assertEquals("2", etMsd.getText().toString());
+        assertEquals("", etCid.getText().toString());
+    }
+
+    /**
+     * The other half: a PINNED card keeps whatever MSD/CID the user
+     * already chose - a dump paste must not clobber a hand-set value
+     * the way applyProfile()'s own shape-guarded fields already don't.
+     */
+    @Test
+    public void applyDump_pinnedCard_keepsItsOwnMsdAndCid() {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putBoolean("card0_profilepin", true).commit();
+        type(etMsd, "1");
+        type(etCid, "80");
+
+        type(etTrack2, "5555555555554444=29122015678");
+
+        assertEquals("1", etMsd.getText().toString());
+        assertEquals("80", etCid.getText().toString());
     }
 }
