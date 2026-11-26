@@ -2441,6 +2441,38 @@ public class ShadowApduService extends HostApduService {
             String sm = null;
             if ((ins & 0xFF) == 0xA8) {
                 sm = useScript() ? scriptMatch(apdu) : null;
+                if (sm == null) {
+                    // mastercardDualGpo()/mastercardMsdGpo()/mastercardGpoFromCard()
+                    // are reachable ONLY through this branch below - the
+                    // mastercardShape check, the SW append and the AC/AIP
+                    // bookkeeping that follows all live there, and
+                    // duplicating them here would risk drifting from that
+                    // already-tested logic. Disarming the script
+                    // (applyCardBlock()'s own "# loaded from a card
+                    // block..." comment, or the test suite's own
+                    // disableDefaultProfileScript()) used to fall all the
+                    // way through to gpo() below, which has no dual/msd/emv
+                    // awareness at all - a synthetic hit ("7700": tag 77,
+                    // empty body) satisfies mastercardShape's own detection
+                    // (77-tag, no 9F26) without needing a real script line,
+                    // and that existing code completely REBUILDS the body
+                    // from mcMsdMode() regardless of what this placeholder
+                    // held - only the shape matters, not the content.
+                    //
+                    // NOT gated on activeProfile().name() alone: a card
+                    // whose PAN merely falls in Mastercard's BIN range
+                    // while running a genuinely custom AID (aidFor()'s own
+                    // matchesAid() accepts anything sharing the RID, e.g. a
+                    // test AID like A0000000049999) must still serve ITS
+                    // OWN typed AID/AIP/AFL through gpo() below, so this
+                    // also requires the effective aid to be Mastercard's
+                    // own exact default, not just RID-compatible.
+                    CardProfile mcProf = activeProfile();
+                    if ("MASTERCARD".equals(mcProf.name())
+                            && aidFor(mcProf).equalsIgnoreCase(mcProf.defaultAid())) {
+                        sm = "7700";
+                    }
+                }
                 tap("-- gpo path: "
                         + (sm != null ? "script" : rawGpo() != null ? "replay" : "builder"));
             }

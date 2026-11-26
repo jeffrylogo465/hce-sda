@@ -708,6 +708,67 @@ the real bug.
 Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
 all 40 tasks executed fresh.
 
+# Dual GPO unreachable after a card block load - synthetic script hit, not scriptRaw()/useScript()
+
+A 4-fix plan was proposed: (1) onSave() must not parse a multi-line
+card block as a track 2 - real, fixed, committed (d2d12ed). (2) make
+scriptRaw()/useScript() fall back to the profile whenever the script
+box has zero armed ('='-containing) lines, via a new armedLines()
+helper - tried, reverted: it broke 5 tests, not the 4 anticipated.
+(3) skip applyCardBlock()'s disarming comment in dual mode - not
+applied, its reason no longer holds once (2) is abandoned. (4)
+CardModel.msd defaults 0 not 1 - real, applied.
+
+Why (2) broke things: disableDefaultProfileScript() (the test suite's
+own helper, 13 call sites in ShadowApduServicePpseTest) and
+applyCardBlock()'s "# loaded from a card block..." comment BOTH rely
+on "a non-empty script box, even comment-only, disarms the profile's
+canned replay" - (2) makes a comment-only box fall back to the canned
+script INSTEAD of disarming it, which is the opposite of what both
+of those sites want. tapsServeTheSavedCard (a 5th, previously
+unanticipated failure) confirmed the mechanism is load-bearing for
+the GENERAL card-block case, not just the dual-mode one fix 3 would
+have covered.
+
+Real fix: mastercardDualGpo()/mastercardMsdGpo()/mastercardGpoFromCard()
+were reachable ONLY through scriptMatch() finding a canned GPO line
+(normally profileScript()'s own) - so disarming the script fell
+through to the generic gpo(), no dual/msd/emv awareness at all. Rather
+than touch scriptRaw()/useScript() (which 13+ tests depend on), inject
+a SYNTHETIC script hit ("7700" - tag 77, empty body) at the point
+sm/hit is computed for GPO, whenever no real script match exists but
+this is genuinely Mastercard's own AID. "7700" satisfies
+mastercardShape's own detection (77-tag, no 9F26) without a real
+script line - the EXISTING, already-tested mastercardShape dispatch
+then completely rebuilds the body from mcMsdMode(), so the
+placeholder's content never matters, only its shape. This reuses the
+SW-append and AC/AIP bookkeeping that already lives in that branch
+instead of duplicating it.
+
+NOT gated on activeProfile().name() alone: aidFor()'s own matchesAid()
+accepts any AID sharing Mastercard's RID (e.g. a test AID like
+A0000000049999), so a custom-AID card whose PAN merely falls in
+Mastercard's BIN range would otherwise be misrouted through
+Mastercard's hardcoded builders, ignoring its own typed AID/AIP/AFL -
+confirmed by tracing tapsServeTheSavedCard's own PAN/AID. Also
+requires the effective aid (aidFor(profile)) to equal the profile's
+own exact defaultAid(), not just RID-compatible.
+
+Verified: ALL 234 tests green on the first run with this approach - no
+new failures, including every disableDefaultProfileScript()-dependent
+test and tapsServeTheSavedCard, which the scriptRaw()/useScript()
+approach had broken.
+
+Test: dualGpoIsStillServedAfterACardBlockLoad (MainActivityCardLoadTest) -
+loads a card block (Mastercard's own real AID), picks Dual via the
+real picker, saves, and asserts the service's own GPO response is the
+byte-exact dual template. Its own expected string had a one-byte typo
+(94 04 instead of 94 08) when first pasted - corrected before using it
+as a gate.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh, no skips added.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

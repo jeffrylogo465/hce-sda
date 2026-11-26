@@ -697,6 +697,6 @@ public class MainActivityCardLoadTest {
         svc.processCommandApdu(Hex.hex("00A4040007A0000000041010"), null);
         String gpo = Hex.toHex(svc.processCommandApdu(Hex.hex("80A8000002830000"), null));
 
-        assertEquals("770E820258C09408080101001001019000", gpo);
+        assertEquals("770E820258C0940808010100100101019000", gpo);
     }
 }

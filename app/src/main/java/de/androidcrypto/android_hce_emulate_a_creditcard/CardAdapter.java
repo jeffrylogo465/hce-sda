@@ -21,7 +21,7 @@ public class CardAdapter extends RecyclerView.Adapter<CardAdapter.CardHolder> {
         public String pan = "";
         public String expiry = "";
         public String aid = "";
-        public int msd = 1;
+        public int msd = 0;
         /** Comma-joined missing chain/ICC-key fields from a loaded track 2 or block, or "". */
         public String certWarning = "";
 
