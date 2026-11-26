@@ -100,7 +100,8 @@ behavior change belongs in the same commit as the test that pins it.
 
 ## Licence
 
-MIT - see `LICENSE`. This is a fork of
+MIT - see `LICENSE` ("Copyright (c) 2024 Michael Fehr (AndroidCrypto)").
+This repo is [jeffrylogo465](https://github.com/jeffrylogo465)'s fork of
 [AndroidCrypto](https://github.com/AndroidCrypto)'s (Michael Fehr) original
 [Android_HCE_Emulate_A_CreditCard](https://github.com/AndroidCrypto/Android_HCE_Emulate_A_CreditCard),
 itself built on these two tutorials:
