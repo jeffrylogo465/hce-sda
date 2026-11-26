@@ -43,6 +43,10 @@ a valid signature that can get responded to the terminal and has a valid signatu
 every transaction may get processed with high "security" priority, but in general it is really hard 
 to make a working code.
 
+MSD (mode 1) only works on terminals built before October 2019 - Mastercard mandated EMV-only
+contactless for new terminals from 18 Oct 2019, and Visa from 19 Oct 2019. Modes 0 and 2 are what a
+modern reader gets. Unattended kit installed before that date is where mode 1 still answers.
+
 ## Link to my NFC Credit Card Reader tutorial
 
 **Talk to your Credit Card**: https://medium.com/@androidcrypto/talk-to-your-credit-card-android-nfc-java-d782ff19fc4a
