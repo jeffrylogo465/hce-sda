@@ -35,7 +35,7 @@ public class MainActivityCardLoadTest {
     private EditText etTrack2, etPan, etExpiry, etService, etDiscretionary,
             etAid, etAip, etAfl, etCid, etAtc, etMsd;
     private View rowMsdMode;
-    private TextView tvMsdModeName;
+    private TextView tvMsdModeName, txtMsdLabel;
 
     @Before
     public void setUp() {
@@ -56,6 +56,7 @@ public class MainActivityCardLoadTest {
         etMsd = activity.findViewById(R.id.etMsd);
         rowMsdMode = activity.findViewById(R.id.rowMsdMode);
         tvMsdModeName = activity.findViewById(R.id.tvMsdModeName);
+        txtMsdLabel = activity.findViewById(R.id.txtMsdLabel);
     }
 
     /**
@@ -618,5 +619,30 @@ public class MainActivityCardLoadTest {
             assertEquals("the row's own label must show the picked mode",
                     names[which], tvMsdModeName.getText().toString());
         }
+    }
+
+    /**
+     * txtMsdLabel (@string/msd_mode_label) must name all three values,
+     * not just 0/1 - the same gap that made dual mode "unreachable from
+     * the UI" before rowMsdMode existed. msdPrefFromBox() (now package-
+     * visible) must resolve each of 0/1/2 for the matching box value -
+     * this is the SAME method collect() and previewText() both now
+     * share, so one passing test here backs every caller.
+     */
+    @Test
+    public void msdModeLabel_namesAllThreeValues_andMsdPrefFromBoxResolvesEach() {
+        String label = txtMsdLabel.getText().toString();
+        assertTrue("label must name 0: " + label, label.contains("0"));
+        assertTrue("label must name 1: " + label, label.contains("1"));
+        assertTrue("label must name 2: " + label, label.contains("2"));
+
+        type(etMsd, "0");
+        assertEquals("0", activity.msdPrefFromBox());
+
+        type(etMsd, "1");
+        assertEquals("1", activity.msdPrefFromBox());
+
+        type(etMsd, "2");
+        assertEquals("2", activity.msdPrefFromBox());
     }
 }

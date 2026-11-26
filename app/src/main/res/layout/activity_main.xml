@@ -729,12 +729,13 @@
                     android:textSize="12sp" />
 
                 <TextView
+                    android:id="@+id/txtMsdLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
                     android:layout_marginBottom="4dp"
                     android:letterSpacing="0.1"
-                    android:text="MSD MODE"
+                    android:text="@string/msd_mode_label"
                     android:textColor="#6B7280"
                     android:textSize="10sp" />
 

@@ -1786,7 +1786,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /** etMsd's text, normalised to the one pref value mcMsdMode() understands: "2" (dual), "1" (MSD) or "0" (EMV). */
-    private String msdPrefFromBox() {
+    String msdPrefFromBox() {
         String v = t(etMsd);
         if (v.startsWith("2")) return "2";
         if (v.startsWith("1")) return "1";
@@ -1920,7 +1920,7 @@ public class MainActivity extends AppCompatActivity {
         String sc = digits(t(etService));
         String disc = t(etDiscretionary).toUpperCase();
         String aid = t(etAid).toUpperCase();
-        String msd = t(etMsd).isEmpty() ? "0" : t(etMsd);
+        String msd = msdPrefFromBox();
         String prof = effectiveProfile();
 
         String track2 = normaliseTrack2(t(etTrack2));
@@ -1948,8 +1948,10 @@ public class MainActivity extends AppCompatActivity {
         sb.append("ATC        : live - climbs once per tap, script carries it\n");
         sb.append("ATC served : ").append(nextAtc(t(etAtc)))
                 .append("  (box + 1 - the service increments)").append('\n');
-        sb.append("MSD        : ").append("0".equals(msd)
-                ? "0  EMV mode - ARQC gets judged" : "1  magstripe - no crypto").append('\n');
+        sb.append("MSD        : ").append("2".equals(msd)
+                ? "2  dual - answers whatever the terminal does"
+                : "1".equals(msd) ? "1  magstripe - no crypto"
+                : "0  EMV mode - ARQC gets judged").append('\n');
         sb.append("CSC        : ")
                 .append(disc.isEmpty() ? "(no DD at all - the arm will guess zeros)"
                         : (isZeroCsc(disc) ? "GUESSED - will fail the checksum"

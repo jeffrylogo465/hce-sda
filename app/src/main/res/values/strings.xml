@@ -11,4 +11,5 @@
     <string name="nfc_off">NFC is off — turn it on, then tap here to become the payment app.</string>
     <!-- main-screen switch: answer taps from assets/profile.json -->
     <string name="asset_card_toggle">TEST CARD AFFFFFFFFF1234 (answer taps from profile.json)</string>
+    <string name="msd_mode_label">MSD (0 = EMV, 1 = magstripe, 2 = dual)</string>
 </resources>
