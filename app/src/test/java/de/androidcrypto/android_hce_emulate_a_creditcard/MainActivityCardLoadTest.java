@@ -518,4 +518,63 @@ public class MainActivityCardLoadTest {
         assertEquals("seed must survive a resume - atccommitted must not still be 9744",
                 "9745", etAtc.getText().toString());
     }
+
+    /**
+     * The direct save path, not just applyDump()'s own dual-mode-default
+     * block: type MSD 2 into the box by hand, Save, and confirm BOTH the
+     * persisted pref and the SERVICE's own resolved mode are dual - not
+     * just etMsd's text, which collect()'s bug left disagreeing with the
+     * pref (see the previous commit). 0 and 1 go through the exact same
+     * collect() write and must stay exactly what they always were.
+     */
+    @Test
+    public void collect_msdBoxPreserves0_1_2_inThePrefAndTheResolvedMode() {
+        type(etPan, "5555555555554444");
+
+        type(etMsd, "2");
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("2", Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("card0_msd", "<none>"));
+        assertEquals(2, activity.cardAt(activity.currentSlot()).msd);
+        {
+            ShadowApduService svc = Robolectric.buildService(ShadowApduService.class).create().get();
+            svc.processCommandApdu(Hex.hex("00A404000E325041592E5359532E4444463031"), null);
+            svc.processCommandApdu(Hex.hex("00A4040007A0000000041010"), null);
+            String gpo = Hex.toHex(svc.processCommandApdu(Hex.hex("80A8000002830000"), null));
+            assertTrue("resolved mode must be dual - the two-entry AFL: " + gpo,
+                    gpo.contains("0801010010010101"));
+        }
+
+        type(etMsd, "1");
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("1", Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("card0_msd", "<none>"));
+        assertEquals(1, activity.cardAt(activity.currentSlot()).msd);
+        {
+            ShadowApduService svc = Robolectric.buildService(ShadowApduService.class).create().get();
+            svc.processCommandApdu(Hex.hex("00A404000E325041592E5359532E4444463031"), null);
+            svc.processCommandApdu(Hex.hex("00A4040007A0000000041010"), null);
+            String gpo = Hex.toHex(svc.processCommandApdu(Hex.hex("80A8000002830000"), null));
+            assertTrue("resolved mode must be single-mode MSD - AIP 5840, one-entry AFL: " + gpo,
+                    gpo.startsWith("770A82025840940408010100"));
+        }
+
+        type(etMsd, "0");
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("0", Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("card0_msd", "<none>"));
+        assertEquals(0, activity.cardAt(activity.currentSlot()).msd);
+        {
+            ShadowApduService svc = Robolectric.buildService(ShadowApduService.class).create().get();
+            svc.processCommandApdu(Hex.hex("00A404000E325041592E5359532E4444463031"), null);
+            svc.processCommandApdu(Hex.hex("00A4040007A0000000041010"), null);
+            String gpo = Hex.toHex(svc.processCommandApdu(Hex.hex("80A8000002830000"), null));
+            assertFalse("resolved mode must NOT be dual or single-mode MSD: " + gpo,
+                    gpo.contains("0801010010010101") || gpo.startsWith("770A82025840"));
+            assertTrue(gpo.endsWith("9000"));
+        }
+    }
 }

@@ -590,6 +590,28 @@ what would have caught this the first time.
 Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
 all 40 tasks executed fresh.
 
+Follow-up (same bug, independently reported): added the more direct
+test the report specifically asked for - type "2" into etMsd by hand
+(not via applyDump()'s own override block), click Save, assert the
+PERSISTED pref AND the SERVICE's own resolved mode (a fresh
+ShadowApduService built from the same prefs, SELECT+SELECT+GPO,
+checking for the dual-mode AFL's distinctive two-entry marker) - then
+repeat for "1" and "0" to confirm they are unchanged. All three passed
+on the first run once a copy-paste typo in the test's own expected
+substring (94 04 instead of 94 08 for the AFL's length byte) was fixed
+- not a code bug, a test bug caught immediately by running it.
+Also double-checked every other reader the report named: bindCard()'s
+intPref() is a generic int parser with no 0/1-only coercion (already
+fine, confirmed by reading it); CardAdapter.CardModel.msd and
+mcMsdMode() in the service were both already fixed in the previous
+commit.
+
+Test: collect_msdBoxPreserves0_1_2_inThePrefAndTheResolvedMode
+(MainActivityCardLoadTest).
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
