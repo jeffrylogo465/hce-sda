@@ -2875,16 +2875,41 @@ public class MainActivity extends AppCompatActivity {
         syncFieldsFromTrack2();
 
         {
+            // FIX: this used to gate the WHOLE reassert - discretionary
+            // included - behind "track2 is long enough for a full
+            // exp+svc tail" (sep > 0 && t2.length() >= sep + 8).
+            // syncFieldsFromTrack2() does not apply that same threshold
+            // to discretionary: it wipes etDiscretionary to "" the moment
+            // track2 has ANY 'D' at all (sep > 0), tail length completely
+            // irrelevant - "disc = tail.length() > 7 ? ... : \"\"" always
+            // runs, and "" almost never equals whatever was just typed.
+            // A short/partial track2 (a 'D' with a short or no tail - a
+            // freshly-typed card that never went through a full track2
+            // paste) wiped discretionary and the length-gated reassert
+            // here never fired to undo it. Discretionary is now
+            // reasserted unconditionally whenever sep > 0, matching
+            // sync's own unconditional touch condition for that one
+            // field; exp/svc and the track2 rebuild stay gated on having
+            // enough tail to slice safely - sync does not touch them at
+            // all when the tail is too short to compute a non-empty value.
             String t2 = normaliseTrack2(t(etTrack2));
             int sep = t2.indexOf('D');
-            if (sep > 0 && t2.length() >= sep + 8) {
-                String exp4 = expWanted.length() == 4 ? expWanted : t2.substring(sep + 1, sep + 5);
-                String svc3 = svcWanted.length() == 3 ? svcWanted : t2.substring(sep + 5, sep + 8);
+            if (sep > 0) {
                 binding = true;
-                if (expWanted.length() == 4) etExpiry.setText(expWanted);
-                if (svcWanted.length() == 3) etService.setText(svcWanted);
                 etDiscretionary.setText(discWanted);
-                etTrack2.setText(t2.substring(0, sep + 1) + exp4 + svc3 + discWanted);
+                if (t2.length() >= sep + 8) {
+                    // Long enough to slice exp/svc safely, and to rebuild
+                    // track2 without losing anything real that was there.
+                    // Too short: leave track2 itself alone rather than
+                    // guess at restructuring a partial exp/svc fragment
+                    // sync may have left behind - the box just reasserted
+                    // is the one the report was about.
+                    String exp4 = expWanted.length() == 4 ? expWanted : t2.substring(sep + 1, sep + 5);
+                    String svc3 = svcWanted.length() == 3 ? svcWanted : t2.substring(sep + 5, sep + 8);
+                    if (expWanted.length() == 4) etExpiry.setText(expWanted);
+                    if (svcWanted.length() == 3) etService.setText(svcWanted);
+                    etTrack2.setText(t2.substring(0, sep + 1) + exp4 + svc3 + discWanted);
+                }
                 binding = false;
             }
         }

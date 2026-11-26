@@ -389,4 +389,30 @@ public class MainActivityCardLoadTest {
         assertEquals("after adding a second card and switching back",
                 "0000000000000", etDiscretionary.getText().toString());
     }
+
+    /**
+     * FIX: onSave()'s own reassert block gated discretionary on the SAME
+     * "track2 is long enough for a full exp+svc tail" condition it used
+     * for exp/svc (sep > 0 && t2.length() >= sep + 8). But
+     * syncFieldsFromTrack2() does not apply that threshold to
+     * discretionary - "disc = tail.length() > 7 ? ... : \"\"" always
+     * computes something and "if (!disc.equals(t(etDiscretionary)))
+     * etDiscretionary.setText(disc)" always applies it, tail length
+     * irrelevant. A short/partial track2 (a 'D' with only a couple of
+     * tail characters - never pasted a full dump) wiped discretionary to
+     * "" and the length-gated reassert never fired to undo it. exp/svc
+     * do not share this exposure - sync's own guard for them
+     * (!exp.isEmpty()) already skips a too-short tail.
+     */
+    @Test
+    public void discretionaryEdit_survivesSave_evenWithAShortMalformedTrack2() {
+        type(etTrack2, "4111111111111111D29");
+        type(etDiscretionary, "0000000000000");
+
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+
+        assertEquals("a 'D' with only 2 tail characters must not wipe discretionary to empty",
+                "0000000000000", etDiscretionary.getText().toString());
+    }
 }

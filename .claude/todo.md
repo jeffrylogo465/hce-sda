@@ -299,10 +299,34 @@ with the fix temporarily reverted (verified directly: reverted both
 changes, ran just this test, still green). So this hardening is correct
 and worth having, but I still have not produced a failing-then-passing
 test proving applyProfile()'s known-table reseed was the actual
-mechanism behind the original report. If it still reverts on the real
-device with this build, the cause is somewhere I haven't found yet -
-next time, get the exact physical sequence (Save button vs. just
-navigating away; whole-app reopen vs. switching card slots) before
+mechanism behind the original report.
+
+FOUND A REAL, SEPARATE BUG IN MY OWN FIX (user re-quoted
+syncFieldsFromTrack2()'s two discretionary lines, prompting a closer
+re-read): the onSave() reassert block gated discretionary behind the
+SAME "track2 long enough for a full exp+svc tail" condition used for
+exp/svc (sep > 0 && t2.length() >= sep + 8). syncFieldsFromTrack2()
+does not apply that threshold to discretionary - it wipes
+etDiscretionary to "" the moment track2 has ANY 'D' at all, tail length
+irrelevant; exp/svc have their own "!exp.isEmpty()" guard that already
+skips a too-short tail, discretionary does not. A short/partial track2
+(a 'D' with only a couple of tail characters - never pasted a full
+dump) wiped discretionary and the length-gated reassert never fired to
+undo it. Fixed: discretionary is now reasserted unconditionally
+whenever sep > 0, decoupled from the exp/svc/track2-rebuild gate (which
+stays length-gated, since rebuilding track2's own exp+svc slice when
+too short risks clobbering a real partial fragment sync left behind).
+New test discretionaryEdit_survivesSave_evenWithAShortMalformedTrack2 -
+verified red against the old gating (temporarily restored it, ran just
+this test, confirmed the ComparisonFailure), green with the real fix
+restored.
+
+Still: this still does not prove the ORIGINAL report's exact mechanism
+on a real device - it is a second, genuinely real gap this session's
+own tracing found, not a confirmed explanation of what the user saw.
+If it still reverts with this build, get the exact physical sequence
+(Save button vs. just navigating away; whole-app reopen vs. switching
+card slots; what the track2 box actually contains at the time) before
 theorizing further.
 
 # Scope
