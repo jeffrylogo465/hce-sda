@@ -556,6 +556,14 @@ public class ShadowApduServicePpseTest {
      * record read as a plausible stand-in; 0001 is the paper's own value
      * for this field and supersedes it.
      *
+     * 9F62 and 9F65 are ZEROED (000000000000 / 0000), not the paper's
+     * literal 000000000038 / 0038 - see mastercardMsdRecord()'s own doc
+     * for why: those name how many CVC3 digits are embedded in track 2
+     * and where, and nothing here embeds one or computes a real CVC3
+     * (mastercardMsdCcc() is a flat 9F61 0000). Serving 38 with nothing
+     * to back it is a guaranteed mismatch, every tap; zero means no CVC3
+     * digits embedded, so there is nothing for the host to check at all.
+     *
      * Track 1 (56) was not given literal bytes the way every other tag
      * here was - built from this profile's default PAN/holder(null)/
      * expiry/service: "B4111111111111111^^3112201". Track 2 (9F6B) is
@@ -573,8 +581,8 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("705B9F6C0200019F62060000000000389F630600000000F000"
-                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200389F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+        assertEquals("705B9F6C0200019F62060000000000009F630600000000F000"
+                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
                         + "9000",
                 send("00B2010C00"));
     }
@@ -597,8 +605,8 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("705E9F6C0200019F62060000000000389F630600000000F000"
-                        + "561D42343131313131313131313131313131315E5E333131323230313738399F6401049F650200389F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+        assertEquals("705E9F6C0200019F62060000000000009F630600000000F000"
+                        + "561D42343131313131313131313131313131315E5E333131323230313738399F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
                         + "9000",
                 send("00B2010C00"));
     }

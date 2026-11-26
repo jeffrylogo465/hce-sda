@@ -329,6 +329,24 @@ If it still reverts with this build, get the exact physical sequence
 card slots; what the track2 box actually contains at the time) before
 theorizing further.
 
+# MSD record: 9F62/9F65 zeroed (no CVC3 embedded)
+
+mastercardMsdRecord() had 9F62=000000000038, 9F65=0038 (the paper's own
+literal values) - these name how many CVC3 digits are embedded in track
+2 and where. Nothing in this record actually embeds one (track2()'s
+discretionary is the fixed 13-zeros-plus-F shape) and
+mastercardMsdCcc() returns a flat 9F61=0000, not a computed CVC3.
+Serving 38 with nothing backing it meant the host would read whatever
+digits happen to sit at that track2 offset as a CVC3 and compare them
+against 9F61's 0000 - a guaranteed mismatch, every tap.
+
+Fixed: 9F62 -> 000000000000, 9F65 -> 0000 (zero CVC3 digits embedded,
+so the host has nothing to check at all - absent, not wrong). 9F63 and
+9F66 left untouched, per the instruction - UN position/count does not
+matter while no CVC3 digit is embedded. Both MSD-record byte-exact
+tests recomputed and pinned. Build gate green on the first run, no
+corrections needed.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

@@ -2114,8 +2114,22 @@ public class ShadowApduService extends HostApduService {
      * GPO used - that value came from a real card's key-chain record
      * (inter_claudiones.credito.json) read as a plausible stand-in; 0001
      * is what the paper itself specifies for this field, and supersedes
-     * it. 9F62/9F63/9F64/9F65/9F66/9F67 are literal constants from the
-     * same source - this app has no per-card basis to vary them yet.
+     * it. 9F63/9F64/9F66/9F67 are literal constants from the same
+     * source - this app has no per-card basis to vary them yet.
+     *
+     * 9F62 and 9F65 are ZEROED, not the paper's literal 000000000038 /
+     * 0038: those name how many CVC3 digits are embedded in track 2 and
+     * where - 38 (decimal 56, a bit offset) says some are. This record's
+     * own 9F6B carries none (track2()'s discretionary is the fixed
+     * 13-zeros-plus-F shape, not a slot for a real digit), and
+     * mastercardMsdCcc() returns a flat 9F61 0000 - no computed CVC3 at
+     * all. Serving 38 here while nothing backs it means the host finds
+     * SOME digits sitting in track2 at that offset (whatever padding or
+     * expiry/service happens to land there) and reads them as a CVC3
+     * that was never meant to be one - a GUARANTEED mismatch against
+     * 9F61's 0000, every tap. Zero here, instead: no CVC3 digits
+     * embedded, so the host has nothing to check at all - the CVC3 is
+     * absent, not wrong.
      */
     private byte[] mastercardMsdRecord() {
         byte[] track1 = mastercardMsdTrack1();
@@ -2126,11 +2140,11 @@ public class ShadowApduService extends HostApduService {
 
         return tlv(0x70, cat(
                 tlv(0x9F6C, hex("0001")),
-                tlv(0x9F62, hex("000000000038")),
+                tlv(0x9F62, hex("000000000000")),
                 tlv(0x9F63, hex("00000000F000")),
                 tlv(0x56, track1),
                 tlv(0x9F64, hex("04")),
-                tlv(0x9F65, hex("0038")),
+                tlv(0x9F65, hex("0000")),
                 tlv(0x9F66, hex("1E00")),
                 tlv(0x9F6B, track2),
                 tlv(0x9F67, hex("04"))));
