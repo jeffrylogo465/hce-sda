@@ -915,7 +915,7 @@ public class MainActivity extends AppCompatActivity {
         collect();
         adapter.notifyItemChanged(current);
 
-        if (!armFromFields()) return;
+        if (armFromFields() != null) return;
 
         if (isZeroCsc(csc)) {
             status("Card built from the number - CSC " + csc
@@ -952,7 +952,7 @@ public class MainActivity extends AppCompatActivity {
                 .putString(key(current, "seededfor"), pan)
                 .apply();
 
-        if (!armFromFields()) return;
+        if (armFromFields() != null) return;
         status("CSC " + csc + " - armed. Tap it.", COL_WARM);
     }
 
@@ -1104,7 +1104,7 @@ public class MainActivity extends AppCompatActivity {
                     .apply();
         }
 
-        boolean armed = armFromFields();
+        String armReason = armFromFields();
 
         // "A card that answers whatever the terminal does, with no mode
         // or CID box to set" - an UNPINNED dump paste overrides whatever
@@ -1126,7 +1126,7 @@ public class MainActivity extends AppCompatActivity {
 
         dumping = false;
 
-        if (!armed) return;
+        if (armReason != null) return;
         status("dump loaded " + d[0] + " " + net
                 + " - record, ATC and script armed. Tap it.", COL_WARM);
     }
@@ -1327,34 +1327,44 @@ public class MainActivity extends AppCompatActivity {
      * are still written, they are what the tap serves; only the two boxes that
      * decide HOW it is served are left alone. Picking a script still stamps them,
      * because the pin is written after the arm in showProfilePicker().
+     *
+     * Returns null on success, or the reason for an early return (also already
+     * posted to the status line by that same return) - a caller that only cared
+     * about success/failure used to get a bare boolean with no way to tell WHICH
+     * validation failed without re-reading this method; this names it instead.
      */
-    private boolean armMsdCard(String pan, String exp, String svc, String ddRaw) {
+    private String armMsdCard(String pan, String exp, String svc, String ddRaw) {
         if (pan == null || pan.length() < 12 || pan.length() > 19) {
-            status("PAN must be 12-19 digits", COL_STALE);
-            return false;
+            String r = "PAN must be 12-19 digits";
+            status(r, COL_STALE);
+            return r;
         }
         if (!pan.matches("[0-9]+")) {
-            status("PAN not digits", COL_STALE);
-            return false;
+            String r = "PAN not digits";
+            status(r, COL_STALE);
+            return r;
         }
 
         String e = (exp == null || exp.length() < 4) ? "3112" : exp;
         if (!e.matches("[0-9]{4}")) {
-            status("expiry not digits (YYMM)", COL_STALE);
-            return false;
+            String r = "expiry not digits (YYMM)";
+            status(r, COL_STALE);
+            return r;
         }
 
         String s = svc == null ? "" : svc;
         while (s.length() < 3) s = "0" + s;
         if (!s.matches("[0-9]{3}")) {
-            status("service code not digits", COL_STALE);
-            return false;
+            String r = "service code not digits";
+            status(r, COL_STALE);
+            return r;
         }
 
         CardProfile prof = Profiles.byName(effectiveProfile());
         if (prof == null) {
-            status("no profile for this card", COL_STALE);
-            return false;
+            String r = "no profile for this card";
+            status(r, COL_STALE);
+            return r;
         }
         String net = prof.name();
         int cscLen = cscLength(net);
@@ -1399,19 +1409,31 @@ public class MainActivity extends AppCompatActivity {
 
         String rec = prof.msdRecord(pan, e, s, dd);
         if (rec == null) {
-            status(net + " has no MSD record shape for this DD", COL_STALE);
-            return false;
+            String r = net + " has no MSD record shape for this DD";
+            status(r, COL_STALE);
+            return r;
         }
         String script = prof.msdScript(csc, atcServed);
         if (script == null) {
-            status(net + " has no MSD script", COL_STALE);
-            return false;
+            String r = net + " has no MSD script";
+            status(r, COL_STALE);
+            return r;
         }
 
         boolean stamp = !profilePinned();
 
         binding = true;
         etAtc.setText(String.format(java.util.Locale.ROOT, "%04X", atcPrev));
+        // FIX: this box write used to leave "atccommitted" (the service's
+        // own last served value, read above to floor atcVal) on file,
+        // unchanged - the NEXT onResume() reads it back, finds it differs
+        // from what this arm just wrote, and rewrites etAtc to the STALE
+        // committed value, undoing the arm (onResume()'s own doc explains
+        // why it does that in general: the service's commit must survive
+        // onPause()'s own re-stamp). Cleared here, in the same block that
+        // writes the box, so the next resume has nothing stale to revert
+        // to - the service will commit a fresh value on the next real tap.
+        prefs.edit().remove(key(current, "atccommitted")).apply();
         // The script IS the mag-stripe replay: it serves the GPO and the CCC
         // itself. On an EMV card it hijacks the GPO and ccc() never runs, so it
         // may only be stamped on a network that is actually mag-stripe.
@@ -1428,11 +1450,11 @@ public class MainActivity extends AppCompatActivity {
                 .putString(key(current, "msdloc"), "0101")
                 .apply();
 
-        return true;
+        return null;
     }
 
     /** Arm from what is in the boxes. The only callers are paste, pick and seed. */
-    private boolean armFromFields() {
+    private String armFromFields() {
         return armMsdCard(digits(t(etPan)), t(etExpiry), t(etService), t(etDiscretionary));
     }
 

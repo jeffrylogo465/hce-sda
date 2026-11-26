@@ -475,4 +475,35 @@ public class MainActivityCardLoadTest {
         assertEquals("1", etMsd.getText().toString());
         assertEquals("80", etCid.getText().toString());
     }
+
+    /**
+     * Root cause of "armMsdCard() is not reaching etAtc.setText": it
+     * WAS reaching it (box correctly went to 9745 - Math.max(0x9746,
+     * 0x9744+1) = 0x9746, served ATC minus one), but left "atccommitted"
+     * at the stale 9744 the arm had just floored against. onResume()
+     * reads that stale value, finds it differs from the box, and
+     * rewrites etAtc back to 9744 - see onResume()'s own doc for why it
+     * does that in general (the service's commit must survive onPause()'s
+     * re-stamp). From the user's side this looks exactly like the arm
+     * never took effect. Fixed by clearing "atccommitted" in the same
+     * block that writes etAtc, so the next resume has nothing stale to
+     * revert to.
+     */
+    @Test
+    public void armMsdCard_clearsAtccommitted_soAResumeDoesNotRewindTheSeed() {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_atccommitted", "9744").commit();
+
+        type(etTrack2, "5555555555554444=291220114129746");
+
+        assertEquals("9745", etAtc.getText().toString());
+
+        activity.onPause();
+        shadowOf(Looper.getMainLooper()).idle();
+        activity.onResume();
+        shadowOf(Looper.getMainLooper()).idle();
+
+        assertEquals("seed must survive a resume - atccommitted must not still be 9744",
+                "9745", etAtc.getText().toString());
+    }
 }

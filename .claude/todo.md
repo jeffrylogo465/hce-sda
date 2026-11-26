@@ -507,6 +507,51 @@ Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
 all 40 tasks executed fresh. Not committed yet in this entry - see git
 log for the actual commit.
 
+# "armMsdCard() is not reaching etAtc.setText" - it was; onResume() rewound it
+
+Reproduced the exact reported scenario in Robolectric before touching
+any code: atccommitted=9744, DD atc=9746, via type(etTrack2,
+"5555555555554444=291220114129746"). The arm DID reach
+etAtc.setText("9745") - Math.max(0x9746, 0x9744+1)=0x9746, served ATC
+minus one - no early return fired at all. Traced the user's own items
+2-4 (msdRecord()/msdScript() for this 13-char DD, the
+Profiles.byName() call) by reading ProfileMastercard.msdRecord() and
+CardProfile's default msdScript() directly: neither rejects this DD,
+neither returns null for this input. The arm itself was never the bug.
+
+Root cause (item 5 - the rewind): armMsdCard() floors atcVal against
+"atccommitted" but never cleared that pref after seeding. The NEXT
+onResume() (see its own doc: committedAtc != etAtc -> rewrite etAtc to
+committedAtc, protecting the service's real commit from onPause()'s
+own re-stamp) found "9744" still on file, saw it differ from the box's
+new "9745", and rewrote the box back to "9744" - from the user's side,
+indistinguishable from the arm never having taken effect.
+
+Fixed: prefs.edit().remove(key(current,"atccommitted")).apply() added
+in the same block as etAtc.setText(), inside armMsdCard() - applies to
+every caller (paste, pick, seed, the CSC-typed re-arm) since the fix
+lives in the shared method.
+
+Also done (item 1 of the request): armMsdCard()/armFromFields()
+converted from boolean to String (null = success, else the reason,
+already posted to the status line by that same return) - every early
+return now names itself to a caller, not just the status line. All
+call sites updated (seedFromPan, onCscTyped, applyDump); the two
+fire-and-forget callers (the profile picker, onSave()'s re-arm) are
+unaffected since they already ignored the return value.
+
+Verified red-then-green: commented out the remove() call, confirmed
+the new test failed (box reverted to 9744 on the simulated resume),
+restored it, confirmed green.
+
+Test (MainActivityCardLoadTest): armMsdCard_clearsAtccommitted_soAResumeDoesNotRewindTheSeed -
+arms with atccommitted=9744/DD atc=9746, asserts the box is 9745,
+calls onPause()+onResume() to simulate a real lifecycle resume,
+asserts the box is STILL 9745.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
