@@ -415,4 +415,30 @@ public class MainActivityCardLoadTest {
         assertEquals("a 'D' with only 2 tail characters must not wipe discretionary to empty",
                 "0000000000000", etDiscretionary.getText().toString());
     }
+
+    /**
+     * FIX: armMsdCard() used to seed etAtc straight from the DD's own
+     * embedded ATC, unconditionally - a re-arm (paste/pick/seed) running
+     * after a real tap had already advanced the service's committed
+     * counter past that DD value rewound it right back, undoing a live
+     * advance with no guard at all (the profile-picker path re-arms this
+     * way routinely). Floored at atccommitted + 1, same Math.max
+     * reasoning nextAtc() already applies to its own "atcfloor" box.
+     *
+     * card0_atccommitted = 9800 (a prior real tap already served that
+     * ATC); the pasted dump's own discretionary embeds CSC 1412 + ATC
+     * 9746, which unguarded would seed the box to 9745 - below what the
+     * service already committed. Floored, it seeds to 9800 instead
+     * (atcVal = max(0x9746, 0x9800+1) = 0x9801, stored as atcVal-1).
+     */
+    @Test
+    public void armMsdCard_atcSeed_isFlooredAtAlreadyCommittedValue() {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_atccommitted", "9800").commit();
+
+        type(etTrack2, "5555555555554444=291220114129746");
+
+        assertEquals("floored seed must not fall below what the service already committed",
+                "9800", etAtc.getText().toString());
+    }
 }

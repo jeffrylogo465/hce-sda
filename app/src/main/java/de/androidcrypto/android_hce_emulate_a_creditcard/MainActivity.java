@@ -1293,6 +1293,14 @@ public class MainActivity extends AppCompatActivity {
      * Visa dCVV is 3 digits and nothing more) pads to 0000, so the served ATC
      * starts at 0001 rather than wrapping to FFFF.
      *
+     * FLOORED AT atccommitted + 1 (FIX): this used to seed from the DD's own
+     * embedded ATC unconditionally, so a re-arm after a real tap had already
+     * advanced the service's counter past that value rewound it right back -
+     * the profile-picker path re-arms with no other guard at all. Same
+     * Math.max reasoning nextAtc() already applies to its own "atcfloor" box,
+     * keyed off "atccommitted" (the service's own last served value) here
+     * instead, since that is what a re-arm actually risks undoing.
+     *
      * MSD AND THE SCRIPT BOX ARE ONLY STAMPED ON AN UNPINNED CARD. A pinned card
      * has the shape the user chose - MSD 0, CID empty, AIP 0800 - and arming
      * used to undo it: every CSC keystroke and every dump paste put MSD back to
@@ -1347,6 +1355,26 @@ public class MainActivity extends AppCompatActivity {
             atcVal = 0;
         }
         if (atcVal == 0) atcVal = 1;
+
+        // FIX: this used to seed straight from the DD's own embedded ATC,
+        // unconditionally - a re-arm (paste/pick/seed) that ran after a
+        // real tap had already advanced the service's counter past this
+        // DD's value rewound it right back, undoing a live advance and
+        // risking an ATC the issuer has already seen (the profile-picker
+        // path re-arms with no guard against this at all). Floored the
+        // same way nextAtc() floors itself - Math.max(parsed, committed + 1)
+        // - keyed off "atccommitted" (the service's own last served value)
+        // rather than the separate "atcfloor" box, since that is what is
+        // actually at risk of being undone here. No committed value on
+        // file (a fresh card, never tapped) leaves the DD's own value as
+        // the only input, same as before this fix.
+        int committedVal = -1;
+        try {
+            String committed = prefs.getString(key(current, "atccommitted"), "");
+            if (committed.length() == 4) committedVal = Integer.parseInt(committed, 16);
+        } catch (NumberFormatException ignored) { }
+        if (committedVal >= 0) atcVal = Math.max(atcVal, (committedVal + 1) & 0xFFFF);
+
         int atcPrev = (atcVal - 1) & 0xFFFF;
         String atcServed = String.format(java.util.Locale.ROOT, "%04X", atcVal);
 

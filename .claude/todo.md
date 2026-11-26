@@ -347,6 +347,42 @@ matter while no CVC3 digit is embedded. Both MSD-record byte-exact
 tests recomputed and pinned. Build gate green on the first run, no
 corrections needed.
 
+# armMsdCard() ATC floor, and the "discretionary" box's real scope
+
+Traced from MainActivity.onResume()'s ATC-restore block back to
+armMsdCard() (called by armFromFields() on "paste, pick, seed"): it
+parses the "discretionary" box as CSC(4)+embedded-ATC(4 hex) for
+Mastercard and seeds etAtc unconditionally from that - which is exactly
+why atc=9744 showed unchanged across every real tap all session (the
+KNOWN table's own discretionary "14129745" has CSC=1412, ATC=9745,
+seeded atc=9744). Not a bug by itself, but it had no floor: a re-arm
+after a real tap had already advanced the service's committed counter
+(mastercardMsdCcc()'s commitAtc()) past that DD value rewound it right
+back - the profile-picker path re-arms with no guard at all.
+
+Fixed: floored at atccommitted+1, same Math.max reasoning nextAtc()
+already applies to its own "atcfloor" box, keyed off "atccommitted" (the
+service's own last served value) instead, since that is what a re-arm
+actually risks undoing. NOTE ON THE DICTATED TEST NUMBERS: the exact
+rule as stated (floor = atccommitted+1, take max against the parsed DD
+value) gives box=9800 for the given example (DD atc 9746, atccommitted
+9800) - verified programmatically before writing anything - not the
+dictated 9799. Implemented the rule as described and used 9800 in the
+actual test (armMsdCard_atcSeed_isFlooredAtAlreadyCommittedValue),
+verified red-then-green (temporarily removed the floor, ran just this
+test, confirmed the ComparisonFailure, restored it). Flagged the
+discrepancy rather than forcing an unverified number into the assertion.
+
+Left mastercardMsdTrack2() hardcoded at 0000000000000F, as decided - 9F6B
+is a template the terminal overwrites per the bitmaps, and with 9F62/9F65
+zeroed nothing gets written back into it, so the content is never read
+live either way. Documented: the "discretionary" box's only two live
+effects on the Mastercard MSD path are mastercardMsdTrack1()'s own tail
+and armMsdCard()'s ATC seed - neither reaches mastercardMsdTrack2().
+
+Build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks, all
+40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

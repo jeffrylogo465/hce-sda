@@ -2056,6 +2056,18 @@ public class ShadowApduService extends HostApduService {
      * a typed box. For a 16-digit PAN that totals PAN(16) + D(1) + YYMM(4)
      * + service(3) + 0000000000000(13) + F(1) = 38 digits, 19 bytes,
      * matching 9F6B's own length (13 hex) with nothing left over to pad.
+     *
+     * DELIBERATELY NOT READING THE "discretionary" BOX: 9F6B here is a
+     * template, overwritten by the terminal per the bitmap tags (9F62/
+     * 9F65 and friends) at whatever digit positions those bitmaps name -
+     * with 9F62/9F65 both zeroed (no CVC3 embedded, see mastercardMsdRecord()'s
+     * own doc), nothing gets written back into it at all, so whatever
+     * sits here is never read as live data either way. Zeros are
+     * correct for a template nothing writes into. The "discretionary"
+     * box's only two live effects on this path are mastercardMsdTrack1()'s
+     * own tail (read directly) and MainActivity.armMsdCard()'s ATC seed
+     * (the UI parses it as CSC+embedded-ATC for its own, separate
+     * legacy-script arming path) - neither reaches this method.
      */
     private byte[] mastercardMsdTrack2() {
         String t = pan() + "D" + expiry6().substring(0, 4)
