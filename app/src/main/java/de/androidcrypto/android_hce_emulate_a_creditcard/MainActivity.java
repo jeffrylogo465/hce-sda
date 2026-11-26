@@ -193,6 +193,10 @@ public class MainActivity extends AppCompatActivity {
             etTrack2, etAid, etAip, etAfl, etCid, etAtc, etArqc, etIad, etMkac,
             etMsd, etScript, etCvmlist, etCvmres, etPdol, etCdol1, etCdol2;
 
+    /** The visible row replacing etMsd's old free-text entry - see rowMsdMode's own doc in the layout. */
+    private View rowMsdMode;
+    private TextView tvMsdModeName;
+
     private View pageWallet, pageEdit;
     private TextView navWallet, navEdit;
 
@@ -336,6 +340,9 @@ public class MainActivity extends AppCompatActivity {
         etIad = findViewById(R.id.etIad);
         etMkac = findViewById(R.id.etMkac);
         etMsd = findViewById(R.id.etMsd);
+        rowMsdMode = findViewById(R.id.rowMsdMode);
+        tvMsdModeName = findViewById(R.id.tvMsdModeName);
+        rowMsdMode.setOnClickListener(v -> showMsdModePicker());
         etScript = findViewById(R.id.etScript);
         etCvmlist = findViewById(R.id.etCvmlist);
         etCvmres = findViewById(R.id.etCvmres);
@@ -744,6 +751,35 @@ public class MainActivity extends AppCompatActivity {
                             .putString(key(current, "profile"), names[which])
                             .putBoolean(key(current, "profilepin"), true)
                             .apply();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private static final String[] MSD_MODE_NAMES = {"EMV", "MSD", "DUAL"};
+
+    /** etMsd's current "0"/"1"/"2" as the name mcMsdMode() resolves it to - anything else defaults to EMV, same fallback mcMsdMode() itself uses. */
+    private String msdModeLabel(String pref) {
+        if ("1".equals(pref)) return MSD_MODE_NAMES[1];
+        if ("2".equals(pref)) return MSD_MODE_NAMES[2];
+        return MSD_MODE_NAMES[0];
+    }
+
+    /**
+     * rowMsdMode's tap target - a 3-way picker (EMV/MSD/Dual) writing
+     * "0"/"1"/"2" to etMsd, replacing free-text entry where "2" (dual
+     * mode) was reachable only by knowing to type it - see the layout's
+     * own doc on rowMsdMode. Same AlertDialog.Builder/setItems shape as
+     * showProfilePicker() above.
+     */
+    private void showMsdModePicker() {
+        new AlertDialog.Builder(this)
+                .setTitle("MSD mode")
+                .setItems(MSD_MODE_NAMES, (d, which) -> {
+                    binding = true;
+                    etMsd.setText(String.valueOf(which));
+                    binding = false;
+                    collect();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1726,14 +1762,18 @@ public class MainActivity extends AppCompatActivity {
         // actually reads at all: the UI box could say "2" while the
         // service ran mode 0, because the NEXT collect() always squashed
         // it back down before a tap. msdPrefFromBox() is the one place
-        // that now decides 0/1/2, shared with the model update below so
-        // the two cannot drift against each other again.
-        putIfChanged(e, key(i, "msd"), msdPrefFromBox());
+        // that now decides 0/1/2, shared with the model update and the
+        // rowMsdMode label below so the three cannot drift against each
+        // other again.
+        String msdPref = msdPrefFromBox();
+        putIfChanged(e, key(i, "msd"), msdPref);
         putIfChanged(e, key(i, "forcetc"), chkForceTc.isChecked() ? "1" : "0");
         putIfChanged(e, key(i, "usescript"), armedLines(t(etScript)) > 0 ? "1" : "0");
         putIfChanged(e, "card_count", cards.size());
         putIfChanged(e, "selected", String.valueOf(i));
         e.apply();
+
+        tvMsdModeName.setText(msdModeLabel(msdPref));
 
         if (i < cards.size()) {
             CardAdapter.CardModel c = cards.get(i);
@@ -1741,7 +1781,7 @@ public class MainActivity extends AppCompatActivity {
             c.pan = t(etPan);
             c.expiry = t(etExpiry);
             c.aid = t(etAid);
-            c.msd = Integer.parseInt(msdPrefFromBox());
+            c.msd = Integer.parseInt(msdPref);
         }
     }
 

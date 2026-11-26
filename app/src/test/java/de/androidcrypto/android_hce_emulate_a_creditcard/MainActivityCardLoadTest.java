@@ -2,11 +2,15 @@ package de.androidcrypto.android_hce_emulate_a_creditcard;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
+import android.app.AlertDialog;
 import android.os.Looper;
+import android.view.View;
 import android.widget.EditText;
+import android.widget.TextView;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -30,6 +34,8 @@ public class MainActivityCardLoadTest {
     private MainActivity activity;
     private EditText etTrack2, etPan, etExpiry, etService, etDiscretionary,
             etAid, etAip, etAfl, etCid, etAtc, etMsd;
+    private View rowMsdMode;
+    private TextView tvMsdModeName;
 
     @Before
     public void setUp() {
@@ -48,6 +54,8 @@ public class MainActivityCardLoadTest {
         etCid = activity.findViewById(R.id.etCid);
         etAtc = activity.findViewById(R.id.etAtc);
         etMsd = activity.findViewById(R.id.etMsd);
+        rowMsdMode = activity.findViewById(R.id.rowMsdMode);
+        tvMsdModeName = activity.findViewById(R.id.tvMsdModeName);
     }
 
     /**
@@ -575,6 +583,40 @@ public class MainActivityCardLoadTest {
             assertFalse("resolved mode must NOT be dual or single-mode MSD: " + gpo,
                     gpo.contains("0801010010010101") || gpo.startsWith("770A82025840"));
             assertTrue(gpo.endsWith("9000"));
+        }
+    }
+
+    /**
+     * MSD mode used to be a free-text box, so "2" (dual) was reachable
+     * only by knowing to type it - rowMsdMode replaces that with a
+     * proper 3-way picker (EMV/MSD/Dual). This drives the picker itself
+     * (tap the row, pick an item from the dialog it shows), not
+     * type(etMsd, ...) - a test that bypasses the picker could not have
+     * caught a bug in the picker's own wiring.
+     *
+     * Checks CardModel.msd rather than rendering a tile through
+     * CardAdapter - the chip text is CardAdapter's own one-line
+     * c.msd==2?"DUAL":c.msd==1?"MSD":"EMV" (read directly, confirmed
+     * correct), so a round-tripped c.msd is what the chip actually
+     * shows.
+     */
+    @Test
+    public void msdModePicker_allThreeRoundTripToPrefAndTileChip() {
+        String[] names = {"EMV", "MSD", "DUAL"};
+        for (int which = 0; which <= 2; which++) {
+            rowMsdMode.performClick();
+            AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+            assertNotNull("tapping the row must show a picker dialog", dialog);
+            shadowOf(dialog).clickOnItem(which);
+            shadowOf(Looper.getMainLooper()).idle();
+
+            assertEquals("pref must round-trip for " + names[which],
+                    String.valueOf(which), Prefs.get(RuntimeEnvironment.getApplication())
+                            .getString("card0_msd", "<none>"));
+            assertEquals("CardModel.msd must round-trip for " + names[which],
+                    which, activity.cardAt(activity.currentSlot()).msd);
+            assertEquals("the row's own label must show the picked mode",
+                    names[which], tvMsdModeName.getText().toString());
         }
     }
 }

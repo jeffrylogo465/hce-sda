@@ -612,6 +612,57 @@ Test: collect_msdBoxPreserves0_1_2_inThePrefAndTheResolvedMode
 Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
 all 40 tasks executed fresh.
 
+# MSD mode: free-text box -> a row + chevron, 3-way picker
+
+"MSD mode is a switch, so it can only be 0 or 1 and DUAL is
+unreachable from the UI" - etMsd was a plain EditText (inputType
+number), with no indication "2" was even a valid value - the label
+above it literally said "MSD (0 = EMV, 1 = magstripe)". Replaced with
+a settings-row UX:
+
+- activity_main.xml: etMsd stays in the layout, visibility="gone" -
+  still the canonical 0/1/2 value holder every existing method
+  (collect(), bindCard(), applyDump(), armMsdCard()) already reads/
+  writes by id, so none of them needed to change. A new rowMsdMode
+  (a clickable LinearLayout) + tvMsdModeName (the visible value text)
+  + a "›" chevron replace it visually.
+- MainActivity: showMsdModePicker() (new) - same AlertDialog.Builder/
+  setItems shape as the existing showProfilePicker(), three items
+  (EMV/MSD/DUAL) writing "0"/"1"/"2" to etMsd then collect(). rowMsdMode's
+  onClickListener wires it. msdModeLabel(pref) (new) maps "0"/"1"/"2" to
+  the display name, same fallback-to-EMV mcMsdMode() itself uses for
+  anything else. collect() now also sets tvMsdModeName's text from the
+  same msdPrefFromBox() value it already uses for the pref write and
+  the CardModel update - three places, one value, so they cannot drift.
+
+Test: msdModePicker_allThreeRoundTripToPrefAndTileChip
+(MainActivityCardLoadTest) - drives the ACTUAL picker (tap rowMsdMode,
+click an item in the ShadowAlertDialog it shows), not type(etMsd, ...)
+directly - a test that bypassed the picker could not have caught a bug
+in its own wiring. Checks the persisted pref, CardModel.msd (which
+CardAdapter's own one-line ternary turns into the tile's chip text -
+read directly, confirmed correct, not separately rendered) and
+tvMsdModeName's own text, for all three modes. Passed on the first run.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh.
+
+## Label typos - NOT found, could not fix
+
+Searched every layout XML, strings.xml, and every Java file with UI
+text for "Offimline TC", "Asset card - Asset minal", and the card
+subtitle "Clonis' + Tenninal" - none of these three strings exist
+anywhere in this codebase, exactly or approximately. The CORRECTLY
+spelled "Offline TC" (both "FORCE OFFLINE TC (never answer ARQC)" in
+the layout and "Offline TC force off - the ladder decides" in
+MainActivity) and chkAssetCard's own string
+(@string/asset_card_toggle = "TEST CARD AFFFFFFFFF1234 (answer taps
+from profile.json)") are the closest related text I could find, and
+neither is mis-spelled. Did not guess at a fix location - asked the
+user where these three strings actually appear (a different branch? a
+screenshot? OCR off the device screen?) rather than invent a change
+against text that is not in this repo.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

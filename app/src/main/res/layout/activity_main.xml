@@ -734,23 +734,54 @@
                     android:layout_marginTop="10dp"
                     android:layout_marginBottom="4dp"
                     android:letterSpacing="0.1"
-                    android:text="MSD (0 = EMV, 1 = magstripe)"
+                    android:text="MSD MODE"
                     android:textColor="#6B7280"
                     android:textSize="10sp" />
 
+                <!-- etMsd stays the canonical 0/1/2 value holder every other
+                     method already reads/writes by id - hidden, not removed,
+                     so nothing else in this file needs to change. rowMsdMode
+                     is what the user actually sees and taps: a 3-way picker
+                     (EMV/MSD/Dual) replaces free-text entry, where "2" (dual
+                     mode) used to be reachable only by knowing to type it. -->
                 <EditText
                     android:id="@+id/etMsd"
                     android:layout_width="match_parent"
                     android:layout_height="44dp"
-                    android:background="@drawable/field_bg"
-                    android:fontFamily="monospace"
-                    android:hint="0"
                     android:inputType="number"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/rowMsdMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:background="@drawable/field_bg"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
                     android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:textColor="#E5E7EB"
-                    android:textColorHint="#4B5563"
-                    android:textSize="13sp" />
+                    android:paddingEnd="12dp">
+
+                    <TextView
+                        android:id="@+id/tvMsdModeName"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:text="EMV"
+                        android:textColor="#E5E7EB"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="›"
+                        android:textColor="#6B7280"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
 
                 <TextView
                     android:layout_width="wrap_content"
