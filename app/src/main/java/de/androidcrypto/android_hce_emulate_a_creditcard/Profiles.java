@@ -267,7 +267,8 @@ public final class Profiles {
         return "80A80000=77" + String.format("%02X", body.length() / 2) + body + "9000";
     }
 
-    // Mastercard GPO on the profile AIP. ARQC unused, see above.
+    // Mastercard GPO on the profile AIP. ARQC unused, see gpoVisa() below -
+    // Kernel 2 puts the cryptogram in GENERATE AC, not the GPO.
     static String gpoMastercard(String atc, String arqc) {
         return gpoWithAip(AIP_MC, atc);
     }

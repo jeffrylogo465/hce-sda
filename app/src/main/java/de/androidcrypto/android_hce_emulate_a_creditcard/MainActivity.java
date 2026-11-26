@@ -1455,6 +1455,14 @@ public class MainActivity extends AppCompatActivity {
             status(r, COL_STALE);
             return r;
         }
+        // For Mastercard this value is computed and then discarded: the
+        // `magstripe` gate below never stamps it into etScript for that
+        // network (msdDefault("MASTERCARD") is "0"), which is the only
+        // thing keeping CardProfile.msdScript()'s Visa/Amex-shaped default
+        // (AIP 1880, format 1) off a Mastercard tap - see that method's own
+        // doc. The `script == null` check right above is still real and
+        // load-bearing (an empty csc/atc on any network), it just is not
+        // the reason Mastercard never serves this script's bytes.
         String script = prof.msdScript(csc, atcServed);
         if (script == null) {
             String r = net + " has no MSD script";
