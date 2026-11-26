@@ -680,6 +680,34 @@ closest existing section to a "Doesn't" paragraph - nothing in this
 file is literally titled that) - MSD/mode 1 only answers terminals
 built before the Oct 2019 Mastercard/Visa EMV-only mandate.
 
+# armMsdCard()'s stamp reverted a picked MSD mode on the next CSC edit
+
+Found via recon: onCscTyped() (etDiscretionary's own TextWatcher) calls
+armFromFields() -> armMsdCard() on every valid CSC edit, with no
+applyProfile() call in between. armMsdCard()'s "stamp" block
+(stamp = !profilePinned()) unconditionally wrote
+etMsd.setText(msdDefault(net)) every time it ran - so picking Dual (or
+MSD, or anything other than the network's own default) on an unpinned
+card, then typing one more CSC digit, silently reverted the pick back
+to mode 0/1 (whatever msdDefault(net) is) with no other action from
+the user. Only stamp when etMsd is actually blank - MainActivity.java,
+the if(stamp) line in armMsdCard() is now
+`if (stamp && t(etMsd).isEmpty())`.
+
+Verified red-then-green: reverted the added `&& t(etMsd).isEmpty()`,
+confirmed the new test failed, restored it, confirmed green.
+
+Test: pickingDualSurvivesASubsequentArm (MainActivityCardLoadTest) -
+picks Dual via the real picker, then drives onCscTyped()'s own real
+trigger (typing a valid, non-zero CSC into etDiscretionary), asserts
+etMsd and the persisted pref both still say "2". armFromFields() is
+private, so this cannot call it directly - it goes through the actual
+UI paths (the picker dialog, then the CSC TextWatcher) that exercise
+the real bug.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

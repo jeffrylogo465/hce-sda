@@ -1482,8 +1482,18 @@ public class MainActivity extends AppCompatActivity {
         // The script IS the mag-stripe replay: it serves the GPO and the CCC
         // itself. On an EMV card it hijacks the GPO and ccc() never runs, so it
         // may only be stamped on a network that is actually mag-stripe.
+        //
+        // FIX: this used to stamp msdDefault(net) over etMsd on EVERY arm,
+        // unconditionally - onCscTyped() calls armFromFields() on every
+        // valid CSC edit with no applyProfile() in between, so picking
+        // Dual (or MSD, or anything other than the network's own default)
+        // on an unpinned card, then typing so much as one more CSC digit,
+        // silently reverted it back to msdDefault(net) - undoing the pick
+        // with no other action from the user at all. Only stamp when
+        // etMsd is actually blank (a fresh card, never arted before) -
+        // once it holds a real value, arming must not overwrite it.
         boolean magstripe = "1".equals(msdDefault(net));
-        if (stamp) {
+        if (stamp && t(etMsd).isEmpty()) {
             etScript.setText(magstripe ? script : "");
             etMsd.setText(msdDefault(net));
         }

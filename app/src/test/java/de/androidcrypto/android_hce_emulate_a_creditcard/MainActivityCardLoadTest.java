@@ -645,4 +645,36 @@ public class MainActivityCardLoadTest {
         type(etMsd, "2");
         assertEquals("2", activity.msdPrefFromBox());
     }
+
+    /**
+     * armMsdCard()'s "stamp" block used to overwrite etMsd with
+     * msdDefault(net) on EVERY arm, unconditionally. onCscTyped() calls
+     * armFromFields() (private, so driven here via the real trigger -
+     * editing etDiscretionary enough to pass its own CSC validation) on
+     * every valid edit, with no applyProfile() call in between - so
+     * picking Dual on an unpinned card, then typing one more CSC digit,
+     * silently reverted it back to mode 0 with no other action at all.
+     * Fixed by only stamping when etMsd is actually blank.
+     */
+    @Test
+    public void pickingDualSurvivesASubsequentArm() {
+        type(etPan, "5555555555554444");
+
+        rowMsdMode.performClick();
+        AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        shadowOf(dialog).clickOnItem(2);
+        shadowOf(Looper.getMainLooper()).idle();
+
+        assertEquals("2", Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("card0_msd", "<none>"));
+
+        // onCscTyped()'s own trigger - a valid, non-zero CSC-length edit.
+        type(etDiscretionary, "1234");
+
+        assertEquals("picking Dual must survive the next CSC-triggered arm",
+                "2", etMsd.getText().toString());
+        assertEquals("2", Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("card0_msd", "<none>"));
+    }
 }
