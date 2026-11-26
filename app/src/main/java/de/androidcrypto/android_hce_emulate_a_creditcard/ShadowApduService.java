@@ -2056,14 +2056,21 @@ public class ShadowApduService extends HostApduService {
     private static final String AIP_MC_MSD = "5840";
 
     /**
-     * Mastercard AIP for dual mode (mcMsdMode()==2): 58 C0 - byte 1
-     * unchanged (CV+TRM+SDA), byte 2 both capability bits AIP_MC
-     * (0x80, EMV mode) and AIP_MC_MSD (0x40, mag-stripe) claim
-     * separately, claimed together - 0x80 | 0x40 = 0xC0. A third
-     * SEPARATE constant, same reasoning as AIP_MC_MSD's own doc: the
-     * three cells (ODA, single-mode MSD, dual) stay decoupled.
+     * Dual mode's AIP byte 2, driven by the "dualbias" box - NOT a fixed
+     * constant: a real terminal that refuses 0xC0 (both capability bits
+     * at once) needs a way out that does not require a rebuild. "msd" ->
+     * 0x40 alone (AIP_MC_MSD's own bit); "emv" -> 0x80 alone (AIP_MC's
+     * own bit); anything else (empty, the untouched default) -> 0xC0,
+     * both bits claimed together - 0x80 | 0x40. Byte 1 is always 0x58,
+     * unchanged, same CV+TRM+SDA shape every Mastercard AIP in this file
+     * claims.
      */
-    private static final String AIP_MC_DUAL = "58C0";
+    private byte dualAipByte2() {
+        String v = p("dualbias", "").trim();
+        if (v.equalsIgnoreCase("msd")) return (byte) 0x40;
+        if (v.equalsIgnoreCase("emv")) return (byte) 0x80;
+        return (byte) 0xC0;
+    }
 
     /**
      * The Mastercard MSD GPO: format 2, to the paper's own shape -
@@ -2087,14 +2094,13 @@ public class ShadowApduService extends HostApduService {
     }
 
     /**
-     * Dual mode (mcMsdMode()==2): one GPO, AIP 58 C0 - both capability
-     * bits the single-mode AIPs claim separately (byte 2 0x80 EMV mode
-     * in AIP_MC, 0x40 mag-stripe in AIP_MC_MSD), claimed together. AFL
-     * is two entries: SFI 1 rec 1, NOT claimed for offline data
-     * authentication (mastercardMsdRecord(), unchanged from the
-     * single-mode MSD cell); SFI 2 rec 1, claimed (mastercardDualEmvRecord(),
-     * a NEW, separate method - not syntheticRecord(), which stays exactly
-     * what mcMsdMode()==0 serves).
+     * Dual mode (mcMsdMode()==2): one GPO, AIP 58 xx - byte 2 from
+     * dualAipByte2(), box-driven, not a fixed constant. AFL is two
+     * entries: SFI 1 rec 1, NOT claimed for offline data authentication
+     * (mastercardMsdRecord() - also carries 57/5F24 now, so SFI 1 alone
+     * is self-sufficient for a PAN and expiry); SFI 2 rec 1, claimed
+     * (mastercardDualEmvRecord(), a NEW, separate method - not
+     * syntheticRecord(), which stays exactly what mcMsdMode()==0 serves).
      *
      * "A card that answers whatever the terminal does, with no mode or
      * CID box to set" is the whole point: the SAME GPO goes out
@@ -2104,7 +2110,7 @@ public class ShadowApduService extends HostApduService {
      * reads both, or just SFI 2, depending on what it actually wants.
      */
     private byte[] mastercardDualGpo() {
-        byte[] aip = hex(AIP_MC_DUAL);
+        byte[] aip = {(byte) 0x58, dualAipByte2()};
 
         tap("-- dual: mastercard gpo aip=" + bytesToHex(aip) + " afl=0801010010010101");
 
@@ -2227,6 +2233,17 @@ public class ShadowApduService extends HostApduService {
                 tlv(0x9F65, hex("0000")),
                 tlv(0x9F66, hex("1E00")),
                 tlv(0x9F6B, track2),
+                // Self-sufficiency addendum: a kernel reading SFI 1 alone
+                // (dual mode's MSD half, or single-mode MSD) must still
+                // find a PAN and expiry - 57 here is mastercardMsdTrack2()'s
+                // own zeros shape (the SAME bytes as 9F6B above), NOT
+                // track2()'s box-driven value, which belongs to
+                // mastercardDualEmvRecord()'s own 57 at SFI 2. No 9F4A
+                // here - that tag belongs to SFI 2 only, the ODA-flagged
+                // record; SFI 1 is never claimed for offline data
+                // authentication, in any mode.
+                tlv(0x57, track2),
+                tlv(0x5F24, hex(expiry6())),
                 tlv(0x9F67, hex("04"))));
     }
 

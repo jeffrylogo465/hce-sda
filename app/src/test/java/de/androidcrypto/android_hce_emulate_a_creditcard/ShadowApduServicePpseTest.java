@@ -525,6 +525,11 @@ public class ShadowApduServicePpseTest {
                 .putString("card0_msd", "2").commit();
     }
 
+    private void setDualBias(String v) {
+        Prefs.get(RuntimeEnvironment.getApplication()).edit()
+                .putString("card0_dualbias", v).commit();
+    }
+
     private void setAtc(String hex4) {
         Prefs.get(RuntimeEnvironment.getApplication()).edit()
                 .putString("card0_atc", hex4).commit();
@@ -576,6 +581,12 @@ public class ShadowApduServicePpseTest {
      * F-padding to a fixed width, the fixed discretionary shape the paper
      * gives, and for this 16-digit default PAN it lands on exactly 19
      * bytes with nothing left over.
+     *
+     * 57 and 5F24 (added by the self-sufficiency addendum): 57 is the
+     * SAME bytes as 9F6B - mastercardMsdTrack2()'s own zeros shape, not
+     * track2()'s box-driven value - so a kernel reading SFI 1 alone
+     * finds a PAN and expiry without needing SFI 2 at all. No 9F4A - SFI
+     * 1 is never the ODA-flagged record, single-mode or dual.
      */
     @Test
     public void mastercardMsdRecord_sfi1Rec1_byteExact() {
@@ -586,8 +597,10 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("705B9F6C0200019F62060000000000009F630600000000F000"
-                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+        assertEquals("70769F6C0200019F62060000000000009F630600000000F000"
+                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F"
+                        + "57134111111111111111D31122010000000000000F"
+                        + "5F24033112019F670104"
                         + "9000",
                 send("00B2010C00"));
     }
@@ -610,8 +623,10 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("705E9F6C0200019F62060000000000009F630600000000F000"
-                        + "561D42343131313131313131313131313131315E5E333131323230313738399F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+        assertEquals("70799F6C0200019F62060000000000009F630600000000F000"
+                        + "561D42343131313131313131313131313131315E5E333131323230313738399F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F"
+                        + "57134111111111111111D31122010000000000000F"
+                        + "5F24033112019F670104"
                         + "9000",
                 send("00B2010C00"));
     }
@@ -770,9 +785,10 @@ public class ShadowApduServicePpseTest {
     // ---- Dual mode (mcMsdMode()==2): one GPO, two records, routed by SFI ----
 
     /**
-     * mastercardDualGpo(): format 2, AIP 58 C0 (both AIP_MC's 0x80 and
-     * AIP_MC_MSD's 0x40 claimed together), AFL 08010100 10010101 - SFI 1
-     * rec 1 not ODA-claimed, SFI 2 rec 1 ODA-claimed.
+     * mastercardDualGpo(): format 2, AIP 58 C0 - the "dualbias" box's
+     * own default (empty, untouched) per dualAipByte2(): both AIP_MC's
+     * 0x80 and AIP_MC_MSD's 0x40 claimed together. AFL 08010100
+     * 10010101 - SFI 1 rec 1 not ODA-claimed, SFI 2 rec 1 ODA-claimed.
      */
     @Test
     public void mastercardDualGpo_isFormat2WithAipC0AndTwoEntryAfl_byteExact() {
@@ -787,9 +803,56 @@ public class ShadowApduServicePpseTest {
     }
 
     /**
-     * Dual mode's SFI 1 rec 1 is mastercardMsdRecord() unchanged - the
-     * SAME bytes mastercardMsdRecord_sfi1Rec1_byteExact() already pins
-     * for single-mode MSD (mcMsdMode()==1). Routed by SFI, not rebuilt.
+     * dualAipByte2(): the "dualbias" box drives AIP byte 2 - "msd" to
+     * 0x40 alone, "emv" to 0x80 alone, "c0"/anything else/empty to 0xC0
+     * - a terminal that refuses one shape needs a box, not a rebuild.
+     */
+    @Test
+    public void mastercardDualGpo_dualbiasMsd_setsAipByte2To40() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        setDualBias("msd");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        assertEquals("770E82025840940808010100100101019000",
+                send("80A8000002830000"));
+    }
+
+    @Test
+    public void mastercardDualGpo_dualbiasEmv_setsAipByte2To80() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        setDualBias("emv");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        assertEquals("770E82025880940808010100100101019000",
+                send("80A8000002830000"));
+    }
+
+    @Test
+    public void mastercardDualGpo_dualbiasUnrecognised_fallsBackToC0() {
+        setProfile("MASTERCARD");
+        setMsdDual();
+        setDualBias("bogus");
+        start();
+        send(SELECT_PPSE);
+        send(SELECT_A0000000041010);
+
+        assertEquals("770E820258C0940808010100100101019000",
+                send("80A8000002830000"));
+    }
+
+    /**
+     * Dual mode's SFI 1 rec 1 is mastercardMsdRecord() - the SAME
+     * method, and the SAME bytes, mastercardMsdRecord_sfi1Rec1_byteExact()
+     * already pins for single-mode MSD (mcMsdMode()==1); routed by SFI,
+     * not rebuilt. Also confirms the self-sufficiency addendum directly
+     * on the dual-mode path: 57 and 5F24 present, 9F4A absent - SFI 1 is
+     * never the ODA-flagged record.
      */
     @Test
     public void mastercardDualSfi1Record_isTheUnchangedMsdRecord_byteExact() {
@@ -800,10 +863,17 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("705B9F6C0200019F62060000000000009F630600000000F000"
-                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F9F670104"
+        String resp = send("00B2010C00");
+        assertEquals("70769F6C0200019F62060000000000009F630600000000F000"
+                        + "561A42343131313131313131313131313131315E5E333131323230319F6401049F650200009F66021E009F6B134111111111111111D31122010000000000000F"
+                        + "57134111111111111111D31122010000000000000F"
+                        + "5F24033112019F670104"
                         + "9000",
-                send("00B2010C00"));
+                resp);
+        assertTrue("57 (track2-shaped) must be present", resp.contains("57134111"));
+        assertTrue("5F24 (expiry) must be present", resp.contains("5F240331"));
+        assertFalse("9F4A must never appear in SFI 1 - it is not the ODA-flagged record",
+                resp.contains("9F4A"));
     }
 
     /**

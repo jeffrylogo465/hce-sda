@@ -473,6 +473,40 @@ possibly empty->synthesized default) - NOT mastercardMsdTrack2()'s
 fixed 0000000000000F shape, which belongs to SFI1 only and was never
 asked to apply to SFI2's 57.
 
+# Dual-mode addendum: SFI 1 self-sufficiency, 9F4A scoping, dualbias box
+
+Four follow-ups on the dual-mode cell above, all implemented and
+tested:
+
+1. mastercardMsdRecord() (SFI 1, shared by single-mode MSD and dual)
+   now also carries 57 and 5F24, inserted right after 9F6B - 57 is
+   mastercardMsdTrack2()'s own zeros shape (the SAME bytes as 9F6B),
+   NOT track2()'s box-driven value - so a kernel reading SFI 1 alone
+   finds a PAN and expiry without needing SFI 2. This changes the
+   SHARED method, so single-mode MSD's own record grew these two tags
+   too, not just dual mode's - the addendum did not scope this to dual
+   only, and "self-sufficient" reads as a property of the record
+   itself, not of one mode. Both existing byte-exact tests for this
+   record (plain, and with a discretionary box set) were re-pinned to
+   the new bytes.
+2. 9F4A 82 confirmed SFI-2-only - already true (never added to SFI 1),
+   now asserted directly: mastercardDualSfi1Record's own test checks
+   9F4A is absent from the SFI 1 response.
+3. dualAipByte2() (new): AIP byte 2 now reads a "dualbias" box -
+   "msd"->0x40, "emv"->0x80, anything else/empty->0xC0 (the untouched
+   default, same byte the hardcoded AIP_MC_DUAL constant used to be).
+   mastercardDualGpo() builds the AIP as {0x58, dualAipByte2()}
+   instead of a fixed two-byte constant - a terminal that refuses 0xC0
+   needs a box, not a rebuild.
+4. Tests (ShadowApduServicePpseTest): the SFI 1 byte-exact tests (both
+   single-mode and dual) now assert 57/5F24 present, 9F4A absent;
+   three new tests pin dualbias "msd"->5840, "emv"->5880, anything
+   else->58C0 in the dual GPO's own AIP byte.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh. Not committed yet in this entry - see git
+log for the actual commit.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
