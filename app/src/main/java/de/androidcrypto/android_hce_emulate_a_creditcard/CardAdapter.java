@@ -26,14 +26,6 @@ public class CardAdapter extends RecyclerView.Adapter<CardAdapter.CardHolder> {
         public String certWarning = "";
 
         public CardModel() { }
-
-        public CardModel(String label, String pan, String expiry, String aid, int msd) {
-            this.label = label;
-            this.pan = pan;
-            this.expiry = expiry;
-            this.aid = aid;
-            this.msd = msd;
-        }
     }
 
     private final List<CardModel> cards = new ArrayList<>();
@@ -42,10 +34,6 @@ public class CardAdapter extends RecyclerView.Adapter<CardAdapter.CardHolder> {
         cards.clear();
         cards.addAll(list);
         notifyDataSetChanged();
-    }
-
-    public int size() {
-        return cards.size();
     }
 
     @NonNull
