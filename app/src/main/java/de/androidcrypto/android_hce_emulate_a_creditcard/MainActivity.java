@@ -2999,6 +2999,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void onSave() {
         String diff = boxDiff(digits(t(etPan)));
+        boolean blockBox = t(etTrack2).contains("\n");
 
         // FIX: syncFieldsFromTrack2() below reads expiry, service AND
         // discretionary back out of the track 2 box, which still holds
@@ -3020,9 +3021,9 @@ public class MainActivity extends AppCompatActivity {
         String svcWanted = t(etService);
         String discWanted = t(etDiscretionary);
 
-        syncFieldsFromTrack2();
+        if (!blockBox) syncFieldsFromTrack2();
 
-        {
+        if (!blockBox) {
             // FIX: this used to gate the WHOLE reassert - discretionary
             // included - behind "track2 is long enough for a full
             // exp+svc tail" (sep > 0 && t2.length() >= sep + 8).

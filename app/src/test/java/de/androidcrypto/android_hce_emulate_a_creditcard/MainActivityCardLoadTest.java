@@ -677,4 +677,26 @@ public class MainActivityCardLoadTest {
         assertEquals("2", Prefs.get(RuntimeEnvironment.getApplication())
                 .getString("card0_msd", "<none>"));
     }
+
+    @Test
+    public void dualGpoIsStillServedAfterACardBlockLoad() {
+        type(etTrack2, "5A=5555555555554444\n5F24=291231\n84=A0000000041010\n9F36=0005\n");
+        assertEquals("A0000000041010", etAid.getText().toString().toUpperCase());
+
+        rowMsdMode.performClick();
+        AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull(dialog);
+        shadowOf(dialog).clickOnItem(2);
+        shadowOf(Looper.getMainLooper()).idle();
+
+        activity.findViewById(R.id.btnSave).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+
+        ShadowApduService svc = Robolectric.buildService(ShadowApduService.class).create().get();
+        svc.processCommandApdu(Hex.hex("00A404000E325041592E5359532E4444463031"), null);
+        svc.processCommandApdu(Hex.hex("00A4040007A0000000041010"), null);
+        String gpo = Hex.toHex(svc.processCommandApdu(Hex.hex("80A8000002830000"), null));
+
+        assertEquals("770E820258C09408080101001001019000", gpo);
+    }
 }
