@@ -1506,6 +1506,70 @@ public class ShadowApduService extends HostApduService {
         return null;
     }
 
+    /**
+     * The first directory entry's 4F out of a PPSE response the SCRIPT just
+     * served - not buildPpse()'s own captured/generated path, which sets
+     * lastPpseTopAid itself and never reaches here.
+     *
+     * NOT findTag() past the first call: findTag() expects its own input to
+     * still carry an outer tag+length to strip before it scans for a child -
+     * right for body (still 6F-wrapped) but wrong for a 61 entry's own value
+     * (4F/50/87 back to back, no wrapper of their own) or a flat run of 61
+     * siblings - stripping either one's first field as if it were an outer
+     * header and then searching only what follows it misses the field that
+     * IS the first sibling. The three walks below are countPpseEntries()/
+     * countDirectoryEntries()/checkOneEntry()'s own loop, reused for the
+     * same shape - an optional BF0C wrapper, then 61 entries - to return the
+     * first entry's AID instead of validating the whole directory.
+     */
+    private byte[] scriptPpseTopAid(byte[] body) {
+        byte[] a5 = findTag(body, 0xA5);
+        return a5 == null ? null : firstDirectoryEntryAid(a5);
+    }
+
+    private byte[] firstDirectoryEntryAid(byte[] a5) {
+        int i = 0;
+        while (i < a5.length) {
+            int[] q = new int[]{i};
+            int t = readTag(a5, q);
+            int l = readLen(a5, q);
+            if (q[0] + l > a5.length) return null;
+            byte[] v = Arrays.copyOfRange(a5, q[0], q[0] + l);
+            i = q[0] + l;
+
+            if (t == 0xBF0C) return firstEntryAidUnder(v);
+            if (t == 0x61) return entryAid(v);
+        }
+        return null;
+    }
+
+    private byte[] firstEntryAidUnder(byte[] dir) {
+        int i = 0;
+        while (i < dir.length) {
+            int[] q = new int[]{i};
+            int t = readTag(dir, q);
+            int l = readLen(dir, q);
+            if (q[0] + l > dir.length) return null;
+            byte[] v = Arrays.copyOfRange(dir, q[0], q[0] + l);
+            i = q[0] + l;
+            if (t == 0x61) return entryAid(v);
+        }
+        return null;
+    }
+
+    private byte[] entryAid(byte[] entry) {
+        int i = 0;
+        while (i < entry.length) {
+            int[] q = new int[]{i};
+            int t = readTag(entry, q);
+            int l = readLen(entry, q);
+            if (q[0] + l > entry.length) return null;
+            if (t == 0x4F) return Arrays.copyOfRange(entry, q[0], q[0] + l);
+            i = q[0] + l;
+        }
+        return null;
+    }
+
     private byte[] buildPpse() {
         byte[] captured = rawPpse();
         if (captured != null && captured.length >= 4) {
@@ -2248,39 +2312,31 @@ public class ShadowApduService extends HostApduService {
     }
 
     /**
-     * Dual mode's SFI 2 rec 1 - the ODA-flagged EMV record, NOT
-     * syntheticRecord() and not reusing it: 70 { 57, 5F24, 8C, 8D, 8E,
-     * 9F0D, 9F0E, 9F0F, 9F4A 82 }, that exact tag order, nothing else.
-     * syntheticRecord() itself stays exactly what mcMsdMode()==0 serves
-     * at SFI 1 - unchanged, not touched by this method at all.
+     * Dual mode's SFI 2 rec 1 - the ODA-flagged EMV record.
      *
-     * NO PAN (5A), NO PSN (5F34), NO HOLDER (5F20), NO 9F42/9F07/9F08/5F28 -
-     * this record is deliberately smaller than syntheticRecord()'s own.
-     * PAN already reaches an EMV kernel reading both AFL entries via SFI
-     * 1's own 9F6B (track2-equivalent, PAN+D+exp+svc+disc) - this record
-     * does not need to repeat it. 57 (track 2) here is track2()'s own
-     * value, the SAME field syntheticRecord() itself reads for its own
-     * 57 - not mastercardMsdTrack2()'s fixed shape, which belongs to SFI
-     * 1 only.
+     * USED TO BE its own, deliberately smaller shape - 70 { 57, 5F24, 8C,
+     * 8D, 8E, 9F0D, 9F0E, 9F0F, 9F4A 82 } only, omitting 5A/5F34/5F20/
+     * 9F42/9F07/9F08/5F28 on the theory that an EMV kernel reading both
+     * AFL entries already has the PAN from SFI 1's own 9F6B and does not
+     * need it repeated here. Ten real taps against this card (gpo path:
+     * script, dual AIP 58C0) showed that theory does not hold in practice:
+     * four of them read SFI 1 then this record and quit before GENERATE AC
+     * every single time - see term_card0_log.txt. The one difference from
+     * single EMV mode (mcMsdMode()==0), which syntheticRecord() already
+     * serves at SFI 1 rec 1 on the same reader, was this record's thinner
+     * shape, so SFI 2 now serves syntheticRecord() itself rather than a
+     * second, narrower shape that could drift from the one already proven
+     * to reach the cryptogram.
      *
-     * 8E honours isBypass() the same way syntheticRecord()'s own 8E
-     * does - one CVM-list rule, not two that could drift.
+     * track2() is still read here only to log it - syntheticRecord() reads
+     * the same field itself for its own 57.
      */
     private byte[] mastercardDualEmvRecord() {
         byte[] t2 = track2();
 
         tap("-- dual: mastercard sfi2 record track2=" + bytesToHex(t2));
 
-        return tlv(0x70, cat(
-                tlv(0x57, t2),
-                tlv(0x5F24, hex(expiry6())),
-                tlv(0x8C, hex(dol("cdol1", CDOL1))),
-                tlv(0x8D, hex(dol("cdol2", CDOL2))),
-                tlv(0x8E, hex(isBypass() ? CVMLIST : cvmBox())),
-                tlv(0x9F0D, hex("0000000000")),
-                tlv(0x9F0E, hex("0000000000")),
-                tlv(0x9F0F, hex("0000000000")),
-                tlv(0x9F4A, hex("82"))));
+        return syntheticRecord();
     }
 
     /**
@@ -2426,13 +2482,17 @@ public class ShadowApduService extends HostApduService {
             // the profile's own gpo() MACs over it. See txnPdol.
             if (ins == 0xA8) txnPdol = pdolDataOf(apdu);
 
+            boolean curIsPpseSelect = false;
             if (isSelect && apdu.length >= 5) {
                 int lc0 = lcOf(apdu);
                 int off0 = dataOff(apdu);
                 if (apdu.length >= off0 + lc0) {
                     byte[] nm = new byte[lc0];
                     System.arraycopy(apdu, off0, nm, 0, lc0);
-                    if (Arrays.equals(nm, PPSE) || Arrays.equals(nm, PPSE_1PAY)) sawPpse = true;
+                    if (Arrays.equals(nm, PPSE) || Arrays.equals(nm, PPSE_1PAY)) {
+                        sawPpse = true;
+                        curIsPpseSelect = true;
+                    }
                 }
             }
 
@@ -2441,6 +2501,38 @@ public class ShadowApduService extends HostApduService {
             String sm = null;
             if ((ins & 0xFF) == 0xA8) {
                 sm = useScript() ? scriptMatch(apdu) : null;
+                if (sm == null) {
+                    // mastercardDualGpo()/mastercardMsdGpo()/mastercardGpoFromCard()
+                    // are reachable ONLY through this branch below - the
+                    // mastercardShape check, the SW append and the AC/AIP
+                    // bookkeeping that follows all live there, and
+                    // duplicating them here would risk drifting from that
+                    // already-tested logic. Disarming the script
+                    // (applyCardBlock()'s own "# loaded from a card
+                    // block..." comment, or the test suite's own
+                    // disableDefaultProfileScript()) used to fall all the
+                    // way through to gpo() below, which has no dual/msd/emv
+                    // awareness at all - a synthetic hit ("7700": tag 77,
+                    // empty body) satisfies mastercardShape's own detection
+                    // (77-tag, no 9F26) without needing a real script line,
+                    // and that existing code completely REBUILDS the body
+                    // from mcMsdMode() regardless of what this placeholder
+                    // held - only the shape matters, not the content.
+                    //
+                    // NOT gated on activeProfile().name() alone: a card
+                    // whose PAN merely falls in Mastercard's BIN range
+                    // while running a genuinely custom AID (aidFor()'s own
+                    // matchesAid() accepts anything sharing the RID, e.g. a
+                    // test AID like A0000000049999) must still serve ITS
+                    // OWN typed AID/AIP/AFL through gpo() below, so this
+                    // also requires the effective aid to be Mastercard's
+                    // own exact default, not just RID-compatible.
+                    CardProfile mcProf = activeProfile();
+                    if ("MASTERCARD".equals(mcProf.name())
+                            && aidFor(mcProf).equalsIgnoreCase(mcProf.defaultAid())) {
+                        sm = "7700";
+                    }
+                }
                 tap("-- gpo path: "
                         + (sm != null ? "script" : rawGpo() != null ? "replay" : "builder"));
             }
@@ -2618,6 +2710,19 @@ public class ShadowApduService extends HostApduService {
                     byte[] scid = findTag(body, 0x9F27);
                     if (scid != null && scid.length >= 1) lastCid = bytesToHex(scid);
                     tap("-- script served GENERATE AC | cid " + lastCid);
+                } else if (curIsPpseSelect) {
+                    // buildPpse()/selectInner() are the only place that ever
+                    // set lastPpseTopAid, and the script path returns before
+                    // either runs - every tap with the default profile script
+                    // armed (which is every profile, by default) answers PPSE
+                    // straight from the canned line below, so baseVerdict()'s
+                    // "offered X" always read "no usable AID", even on a tap
+                    // where the directory this script just served named one.
+                    byte[] topAid = scriptPpseTopAid(body);
+                    if (topAid != null && topAid.length > 0) {
+                        lastPpseTopAid = bytesToHex(topAid);
+                        tap("-- script ppse top aid=" + lastPpseTopAid);
+                    }
                 }
 
                 // THE AC WAS MACED OVER NOTHING HERE. The profile builds the GPO
