@@ -663,6 +663,23 @@ user where these three strings actually appear (a different branch? a
 screenshot? OCR off the device screen?) rather than invent a change
 against text that is not in this repo.
 
+# MSD label names all three values; previewText() stops hiding mode 2
+
+Four edits, one commit (0400b70): strings.xml's new msd_mode_label
+("MSD (0 = EMV, 1 = magstripe, 2 = dual)") on txtMsdLabel;
+msdPrefFromBox() made package-visible; previewText() routes its own
+"MSD" line through msdPrefFromBox() instead of a second
+t(etMsd).isEmpty()-only copy that rendered dual mode as "1 magstripe
+- no crypto" in the card's own preview dialog - same class of bug
+collect() had before the dual-mode pref fix, just in a different
+place. Test: msdModeLabel_namesAllThreeValues_andMsdPrefFromBoxResolvesEach.
+Full build gate green.
+
+README (35b93e8): added under "## To avoid any disappointments" (the
+closest existing section to a "Doesn't" paragraph - nothing in this
+file is literally titled that) - MSD/mode 1 only answers terminals
+built before the Oct 2019 Mastercard/Visa EMV-only mandate.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.
