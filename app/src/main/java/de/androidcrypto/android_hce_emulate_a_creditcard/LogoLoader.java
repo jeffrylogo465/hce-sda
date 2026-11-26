@@ -100,7 +100,4 @@ public final class LogoLoader {
         }
     }
 
-    public static void clearCache() {
-        CACHE.evictAll();
-    }
 }
