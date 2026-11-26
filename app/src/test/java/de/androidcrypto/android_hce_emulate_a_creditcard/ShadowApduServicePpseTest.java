@@ -877,12 +877,15 @@ public class ShadowApduServicePpseTest {
     }
 
     /**
-     * Dual mode's SFI 2 rec 1 is mastercardDualEmvRecord() - 70 { 57,
-     * 5F24, 8C, 8D, 8E, 9F0D, 9F0E, 9F0F, 9F4A 82 } - the shorter EMV
-     * record, NOT syntheticRecord()'s own, pinned byte-exact.
+     * Dual mode's SFI 2 rec 1 is mastercardDualEmvRecord(), which now
+     * returns syntheticRecord() itself - see that method's own doc for why
+     * (ten real taps, four of them quitting before GENERATE AC every time
+     * with the old, thinner shape). Pinned byte-exact against the same
+     * shape mastercardGpoFromCard()'s SFI 1 entry already proves reaches
+     * the cryptogram.
      */
     @Test
-    public void mastercardDualSfi2Record_isTheShorterEmvRecord_byteExact() {
+    public void mastercardDualSfi2Record_isTheSyntheticEmvRecord_byteExact() {
         setProfile("MASTERCARD");
         setMsdDual();
         start();
@@ -890,7 +893,7 @@ public class ShadowApduServicePpseTest {
         send(SELECT_A0000000041010);
         send("80A8000002830000");
 
-        assertEquals("706F570C4111111111111111D31122015F24033112018C159F02069F03069F1A0295055F2A029A039C019F37048D189F02069F03069F1A0295055F2A029A039C019F37049F34038E0C00000000000000005E071F039F0D0500000000009F0E0500000000009F0F0500000000009F4A0182"
+        assertEquals("7081919F420208405F24033112015A0841111111111111115F3401019F0702FFC09F080200029F4A01828C159F02069F03069F1A0295055F2A029A039C019F37048D189F02069F03069F1A0295055F2A029A039C019F37049F34038E0C00000000000000005E071F039F0D0500000000009F0E0500000000009F0F0500000000005F28020840570C4111111111111111D3112201"
                         + "9000",
                 send("00B2011400"));
     }
@@ -916,5 +919,30 @@ public class ShadowApduServicePpseTest {
                 sfi2.contains("9F4A0182") && !sfi2.contains("9F6C"));
         assertTrue("SFI 1 must be the MSD record (9F6C/9F6B), not the EMV one",
                 sfi1.contains("9F6C0200") && sfi1.contains("9F6B") && !sfi1.contains("8C159F02"));
+    }
+
+    /**
+     * buildPpse()/selectInner() are the only place that ever set
+     * lastPpseTopAid, and the default profile script answers PPSE itself,
+     * before either runs - true for every profile, since none of them call
+     * disableDefaultProfileScript(). A terminal that read the directory and
+     * then dropped the field (nSelects stays 1) was reported as "offered no
+     * usable AID", even on a tap where the script-served directory just
+     * named one - see term_card0_log.txt's five field-drop taps.
+     */
+    @Test
+    public void scriptServedPpse_verdictNamesTheRealAid_notNoUsableAid() {
+        setProfile("MASTERCARD");
+        start();
+        send(SELECT_PPSE);
+
+        svc.onDeactivated(0);
+        String verdict = Prefs.get(RuntimeEnvironment.getApplication())
+                .getString("lastverdict", "");
+        assertTrue("must name the real top AID the script-served PPSE offered: " + verdict,
+                verdict.contains("A0000000041010"));
+        assertFalse("must not claim no usable AID was offered when the script's own "
+                        + "directory named one: " + verdict,
+                verdict.contains("no usable AID"));
     }
 }
