@@ -110,12 +110,13 @@ public final class Profiles {
     // inner TLVs - the 94 wrapper is format 2 shape and belongs only in a 77.
     private static final String AFL_RAW = "08010100";
 
-    // Accessors for the service's own GPO builder (ShadowApduService
+    // Accessor for the service's own GPO builder (ShadowApduService
     // mastercardGpoFromCard()), which assembles a 77 from scratch rather than
-    // replaying the canned script line and needs the same AIP/AFL bytes this
-    // class already carries, not a second hand-typed copy.
+    // replaying the canned script line and needs the same AIP bytes this
+    // class already carries, not a second hand-typed copy. AFL_RAW's own
+    // equivalent accessor (aflOneRaw()) was dead code - deleted; AFL_RAW
+    // itself is still read directly below.
     static byte[] aipMc() { return Hex.hex(AIP_MC); }
-    static byte[] aflOneRaw() { return Hex.hex(AFL_RAW); }
 
     // Visa CTQ (9F6C): 30 = go online and switch interface if ODA fails.
     // VISA ONLY - in Kernel 2 the same tag is the mag-stripe app version.
@@ -266,7 +267,8 @@ public final class Profiles {
         return "80A80000=77" + String.format("%02X", body.length() / 2) + body + "9000";
     }
 
-    // Mastercard GPO on the profile AIP. ARQC unused, see above.
+    // Mastercard GPO on the profile AIP. ARQC unused, see gpoVisa() below -
+    // Kernel 2 puts the cryptogram in GENERATE AC, not the GPO.
     static String gpoMastercard(String atc, String arqc) {
         return gpoWithAip(AIP_MC, atc);
     }

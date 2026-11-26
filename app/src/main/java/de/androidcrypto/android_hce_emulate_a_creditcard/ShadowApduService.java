@@ -18,6 +18,10 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+/**
+ * 9F34 (CVM Results) is documentation only here - the terminal owns it and
+ * sends it in CDOL1; this service never builds or stores a value for it.
+ */
 public class ShadowApduService extends HostApduService {
 
     private static final String TAG = "HCE";
@@ -208,9 +212,6 @@ public class ShadowApduService extends HostApduService {
      * comment named and did not prevent.
      */
     static final String CVMLIST = "00000000000000005E071F03";
-
-    /** Documentation only - the terminal owns 9F34 and sends it in CDOL1. */
-    private static final String CVM_RESULTS = "1F0302";
 
     private final StringBuilder tapLog = new StringBuilder();
     private final SecureRandom rnd = new SecureRandom();
@@ -2206,6 +2207,10 @@ public class ShadowApduService extends HostApduService {
      * own tail (read directly) and MainActivity.armMsdCard()'s ATC seed
      * (the UI parses it as CSC+embedded-ATC for its own, separate
      * legacy-script arming path) - neither reaches this method.
+     *
+     * The generic skeleton-Track-2 packer (PAN D YYMM SVC DD, EmvCrypto's
+     * own msdTrack2()) was deleted as dead code - never called. This
+     * method is the one live shape; EmvCrypto no longer carries a copy.
      */
     private byte[] mastercardMsdTrack2() {
         String t = pan() + "D" + expiry6().substring(0, 4)

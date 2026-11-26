@@ -49,9 +49,6 @@ public class MainActivity extends AppCompatActivity {
     private static final int COL_WARM    = 0xFFF6C177;
     private static final int COL_STALE   = 0xFF6B7280;
 
-    private static final String CDOL1   = "9F02069F03069F1A0295055F2A029A039C019F3704";
-    private static final String CDOL2   = "9F02069F03069F1A0295055F2A029A039C019F37049F3403";
-
     /** Eight zero DD bytes, for the menu-driven skeleton builder. */
     private static final String DD_ZERO = "0000000000000000";
 
@@ -1458,6 +1455,14 @@ public class MainActivity extends AppCompatActivity {
             status(r, COL_STALE);
             return r;
         }
+        // For Mastercard this value is computed and then discarded: the
+        // `magstripe` gate below never stamps it into etScript for that
+        // network (msdDefault("MASTERCARD") is "0"), which is the only
+        // thing keeping CardProfile.msdScript()'s Visa/Amex-shaped default
+        // (AIP 1880, format 1) off a Mastercard tap - see that method's own
+        // doc. The `script == null` check right above is still real and
+        // load-bearing (an empty csc/atc on any network), it just is not
+        // the reason Mastercard never serves this script's bytes.
         String script = prof.msdScript(csc, atcServed);
         if (script == null) {
             String r = net + " has no MSD script";

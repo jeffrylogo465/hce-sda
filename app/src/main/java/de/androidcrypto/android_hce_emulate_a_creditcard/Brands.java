@@ -342,11 +342,6 @@ public final class Brands {
         return sb.toString();
     }
 
-    public static String last4(String pan) {
-        String d = digits(pan);
-        return d.length() >= 4 ? d.substring(d.length() - 4) : d;
-    }
-
     private static String digits(String s) {
         return s == null ? "" : s.replaceAll("[^0-9]", "");
     }

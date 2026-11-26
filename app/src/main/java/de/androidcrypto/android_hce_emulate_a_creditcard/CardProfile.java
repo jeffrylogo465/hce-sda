@@ -71,6 +71,16 @@ public interface CardProfile {
      * The CCC line is keyed on 80AE alone, never 80AE8000: P1 varies by terminal
      * and scriptMatch matches by prefix, so a longer key misses and falls
      * through to ccc(), which needs an IMKCVC3 a dump cannot supply.
+     *
+     * THE 1880/FORMAT-1 GPO HERE IS VISA AND AMEX ONLY. Mastercard's own MSD
+     * shapes come from ShadowApduService.mastercardMsdGpo() (AIP 5840, format
+     * 2) and mastercardMsdCcc(), reached through mastercardShape dispatch,
+     * not through this script at all - this default is never served for a
+     * Mastercard card, in any mode. Neither ProfileMastercard nor anything
+     * else overrides this method, so it still runs for a Mastercard profile
+     * whenever msdScript() is called; what keeps its output off the wire for
+     * that network is MainActivity.armMsdCard()'s own magstripe gate, not
+     * anything in here - see that method's own note on why.
      */
     default String msdScript(String csc, String atc) {
         if (csc == null || csc.isEmpty() || atc == null || atc.isEmpty()) return null;
