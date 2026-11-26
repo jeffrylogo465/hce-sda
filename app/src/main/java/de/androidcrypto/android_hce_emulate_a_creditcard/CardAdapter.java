@@ -101,7 +101,7 @@ public class CardAdapter extends RecyclerView.Adapter<CardAdapter.CardHolder> {
         set(root, R.id.cardPan, Brands.formatPan(c.pan), s.fg);
         set(root, R.id.cardExpiry, prettyExpiry(c.expiry), s.muted);
         set(root, R.id.cardAid, c.aid == null || c.aid.isEmpty() ? "--" : c.aid, s.muted);
-        set(root, R.id.cardMode, c.msd == 1 ? "MSD" : "EMV", s.muted);
+        set(root, R.id.cardMode, c.msd == 2 ? "DUAL" : c.msd == 1 ? "MSD" : "EMV", s.muted);
         set(root, R.id.cardIndex, (position + 1) + "/" + total, s.muted);
 
         // No dialog for this any more - a loaded track 2 or block that is

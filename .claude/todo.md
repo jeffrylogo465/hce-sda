@@ -552,6 +552,44 @@ asserts the box is STILL 9745.
 Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
 all 40 tasks executed fresh.
 
+# Dual mode never actually reached the service - collect() squashed it
+
+A real tap in dual mode showed msd=false/mode 0, even after armMsdCard()'s
+atccommitted fix. Traced to two compounding bugs in MainActivity, both
+in collect() (the method that persists every box to prefs, called after
+nearly every edit):
+
+1. putIfChanged(e, key(i,"msd"), t(etMsd).startsWith("1") ? "1" : "0") -
+   NO case for "2" at all. Any later collect() call (which happens
+   constantly - after basically every keystroke elsewhere) silently
+   collapsed "2" back to "0" in the PERSISTED pref, even though etMsd's
+   own UI text still said "2". mcMsdMode() reads the pref, not the box -
+   so the service ran mode 0 regardless of what the screen showed.
+2. applyDump()'s own dual-mode-default block (etMsd.setText("2") for an
+   unpinned card) never called collect() itself - armFromFields() ->
+   armMsdCard() had ALREADY called its own collect() earlier in the
+   same method, persisting msdDefault(net) ("0"), and nothing after
+   that point wrote "2" to the pref until some unrelated later event
+   happened to call collect() again.
+
+Both are now fixed: msdPrefFromBox() (new, shared by collect()'s pref
+write and its CardAdapter.CardModel update, so the two cannot drift
+again) maps etMsd's text to "2"/"1"/"0" correctly; the dual-mode-default
+block in applyDump() now calls collect() itself right after setting the
+box, rather than relying on a later unrelated call. CardAdapter's own
+tile label also gained a third case (c.msd==2 -> "DUAL") - it used to
+fall through to "EMV" for dual mode, a separate cosmetic instance of the
+same 0/1-only assumption.
+
+Verified red-then-green for BOTH fixes independently (reverted each one
+in turn, confirmed the existing applyDump_unpinnedCard_setsDualModeAndClearsCid
+test failed, restored, confirmed green) - that test now also asserts
+the PERSISTED "card0_msd" pref, not just etMsd's own text, which is
+what would have caught this the first time.
+
+Full build gate green: testDebugUnitTest + assembleDebug, --rerun-tasks,
+all 40 tasks executed fresh.
+
 # Scope
 
 The register run is the target. Don't re-litigate whether it's in scope.

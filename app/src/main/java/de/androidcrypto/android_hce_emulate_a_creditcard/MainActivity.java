@@ -1122,6 +1122,15 @@ public class MainActivity extends AppCompatActivity {
             etMsd.setText("2");
             etCid.setText("");
             binding = false;
+            // FIX: armFromFields() -> armMsdCard() already called its own
+            // collect() before this block ran, persisting whatever MSD
+            // value THAT write left in the box (msdDefault(net), not 2) -
+            // so without a collect() here, "card0_msd" stayed whatever
+            // armMsdCard() last wrote until some LATER, unrelated event
+            // happened to call collect() again. The box could say "2"
+            // while the service, which reads the pref rather than the
+            // box, kept running mode 0 - exactly what a real tap showed.
+            collect();
         }
 
         dumping = false;
@@ -1709,7 +1718,17 @@ public class MainActivity extends AppCompatActivity {
         putIfChanged(e, key(i, "cdol2"), t(etCdol2).toUpperCase());
         putIfChanged(e, key(i, "mkac"), t(etMkac).toUpperCase());
         putIfChanged(e, key(i, "script"), t(etScript));
-        putIfChanged(e, key(i, "msd"), t(etMsd).startsWith("1") ? "1" : "0");
+        // FIX: this used to collapse etMsd's text to "1" or "0" only - no
+        // case for "2" (dual mode, mcMsdMode()'s own third state) at all.
+        // collect() runs after nearly every edit, including right after
+        // applyDump()'s own etMsd.setText("2") for an unpinned card - so
+        // dual mode never reached the "card0_msd" pref the service
+        // actually reads at all: the UI box could say "2" while the
+        // service ran mode 0, because the NEXT collect() always squashed
+        // it back down before a tap. msdPrefFromBox() is the one place
+        // that now decides 0/1/2, shared with the model update below so
+        // the two cannot drift against each other again.
+        putIfChanged(e, key(i, "msd"), msdPrefFromBox());
         putIfChanged(e, key(i, "forcetc"), chkForceTc.isChecked() ? "1" : "0");
         putIfChanged(e, key(i, "usescript"), armedLines(t(etScript)) > 0 ? "1" : "0");
         putIfChanged(e, "card_count", cards.size());
@@ -1722,8 +1741,16 @@ public class MainActivity extends AppCompatActivity {
             c.pan = t(etPan);
             c.expiry = t(etExpiry);
             c.aid = t(etAid);
-            c.msd = t(etMsd).startsWith("1") ? 1 : 0;
+            c.msd = Integer.parseInt(msdPrefFromBox());
         }
+    }
+
+    /** etMsd's text, normalised to the one pref value mcMsdMode() understands: "2" (dual), "1" (MSD) or "0" (EMV). */
+    private String msdPrefFromBox() {
+        String v = t(etMsd);
+        if (v.startsWith("2")) return "2";
+        if (v.startsWith("1")) return "1";
+        return "0";
     }
 
     private void bindCard(int i) {

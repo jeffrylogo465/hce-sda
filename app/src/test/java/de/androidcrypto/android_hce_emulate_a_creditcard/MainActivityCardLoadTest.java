@@ -449,6 +449,15 @@ public class MainActivityCardLoadTest {
      * own msdDefault(net) with dual mode (2) and clears the CID box, so
      * mastercardGenac()'s P1-driven ladder decides instead of a typed-in
      * override. See MainActivity.applyDump()'s own doc for this block.
+     *
+     * Asserts the PERSISTED "card0_msd" pref, not just etMsd's own text -
+     * a real tap proved the two can disagree: collect() used to collapse
+     * the box's "2" to "0" on every call (no case for dual mode at all),
+     * and applyDump()'s own dual-mode block never called collect() itself
+     * either, so the pref stayed whatever armMsdCard()'s EARLIER collect()
+     * had already written (msdDefault(net), i.e. "0") regardless of what
+     * the box went on to show. The service reads the pref, not the box -
+     * a real terminal ran mode 0 while the UI said dual.
      */
     @Test
     public void applyDump_unpinnedCard_setsDualModeAndClearsCid() {
@@ -456,6 +465,9 @@ public class MainActivityCardLoadTest {
 
         assertEquals("2", etMsd.getText().toString());
         assertEquals("", etCid.getText().toString());
+        assertEquals("the service reads this pref, not the box",
+                "2", Prefs.get(RuntimeEnvironment.getApplication())
+                        .getString("card0_msd", "<none>"));
     }
 
     /**
