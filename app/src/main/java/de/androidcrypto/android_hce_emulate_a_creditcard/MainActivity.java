@@ -49,9 +49,6 @@ public class MainActivity extends AppCompatActivity {
     private static final int COL_WARM    = 0xFFF6C177;
     private static final int COL_STALE   = 0xFF6B7280;
 
-    private static final String CDOL1   = "9F02069F03069F1A0295055F2A029A039C019F3704";
-    private static final String CDOL2   = "9F02069F03069F1A0295055F2A029A039C019F37049F3403";
-
     /** Eight zero DD bytes, for the menu-driven skeleton builder. */
     private static final String DD_ZERO = "0000000000000000";
 
