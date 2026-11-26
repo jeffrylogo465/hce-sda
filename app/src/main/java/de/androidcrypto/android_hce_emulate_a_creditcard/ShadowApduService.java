@@ -2206,6 +2206,10 @@ public class ShadowApduService extends HostApduService {
      * own tail (read directly) and MainActivity.armMsdCard()'s ATC seed
      * (the UI parses it as CSC+embedded-ATC for its own, separate
      * legacy-script arming path) - neither reaches this method.
+     *
+     * The generic skeleton-Track-2 packer (PAN D YYMM SVC DD, EmvCrypto's
+     * own msdTrack2()) was deleted as dead code - never called. This
+     * method is the one live shape; EmvCrypto no longer carries a copy.
      */
     private byte[] mastercardMsdTrack2() {
         String t = pan() + "D" + expiry6().substring(0, 4)

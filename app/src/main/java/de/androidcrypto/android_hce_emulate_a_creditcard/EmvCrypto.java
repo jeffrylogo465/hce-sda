@@ -252,27 +252,6 @@ public class EmvCrypto {
     }
 
     /**
-     * Skeleton Track 2: PAN D YYMM SVC DD, packed nibbles.
-     *
-     * Track 2 is packed, not ASCII - D is the separator nibble. The PAN is the
-     * FULL PAN; a tail-only track leaves the issuer unable to find the account.
-     *
-     * DD must exist even when it holds no real data: the CVC3, UN and ATC
-     * digits land at the positions the bitmaps point to, and with no DD there
-     * is nowhere to point. Personalise those positions as zeros.
-     *
-     * F is appended only when the digit count is odd, and is the same nibble
-     * the verifier leaves out of the bitmap range.
-     */
-    static byte[] msdTrack2(String pan, String exp, String svc, int ddDigits) {
-        StringBuilder sb = new StringBuilder(pan == null ? "" : pan);
-        sb.append('D').append(exp).append(svc);
-        for (int i = 0; i < ddDigits; i++) sb.append('0');
-        if (sb.length() % 2 != 0) sb.append('F');
-        return Hex.hex(sb.toString());
-    }
-
-    /**
      * IVCVC3 for a track: the rightmost 2 bytes of the MAC over that track's
      * own bytes under KDCVC3.
      *
